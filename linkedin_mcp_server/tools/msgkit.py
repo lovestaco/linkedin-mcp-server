@@ -99,6 +99,26 @@ _ACCOUNT_JS = r"""() => {
 }"""
 
 
+_PEOPLE_JS = r"""() => {
+  const m = document.querySelector('main');
+  const text = m ? m.innerText : '';
+  // The company's numeric id: its own "<size> employees" link searches
+  // currentCompany=["<id>"] (a "connections work here" link may name another).
+  let id = null;
+  for (const a of document.querySelectorAll('a[href*="currentCompany"]')) {
+    const mm = decodeURIComponent(a.href).match(/currentCompany=\["?(\d+)/);
+    if (mm && /employees/i.test(a.innerText || '')) { id = mm[1]; break; }
+  }
+  const slug = (location.pathname.match(/\/company\/([^/]+)/) || [])[1] || null;
+  return {
+    text,
+    company_id: id,
+    slug,
+    ready: /associated members?/i.test(text) && /What they do/i.test(text),
+  };
+}"""
+
+
 def _parts(extractor: Any) -> tuple[Any, Any]:
     capture = extractor._capture
     return capture._session, capture._navigator
@@ -219,6 +239,45 @@ def register_msgkit_tools(
         session = await _open(extractor, url)
         await _pause(1.5, 3.0)
         info = await session.page.evaluate(_EXPERIENCE_JS)
+        info["url"] = url
+        return info
+
+    @mcp.tool(
+        timeout=tool_timeout,
+        title="msgkit: Company People (one function)",
+        annotations={"readOnlyHint": True, "openWorldHint": True},
+        tags={"company", "msgkit"},
+    )
+    @tool_errors
+    async def msgkit_company_people(
+        company_slug: str,
+        ctx: Context,
+        function_id: Annotated[int, Field(ge=1, le=100)] = 8,
+    ) -> dict[str, Any]:
+        """
+        Open /company/<slug>/people/?facetCurrentFunction=<id> (one page load;
+        8 = Engineering) and wait until the insights have rendered. With the
+        filter, "N associated members" and the pinned first row of "What they
+        do" are that function's headcount, the same for every viewer (the
+        "People highlights" line is personalised and is not used).
+
+        Returns {url, text, company_id, slug, ready}; ready=false means the
+        insights never appeared (retry later rather than trusting the text).
+        """
+        slug = company_slug.strip().strip("/").split("/")[-1].lower()
+        extractor = await get_ready_extractor(ctx, tool_name="msgkit_company_people")
+        url = f"https://www.linkedin.com/company/{slug}/people/?facetCurrentFunction={function_id}"
+        session = await _open(extractor, url)
+        page = session.page
+        info: dict[str, Any] = {}
+        deadline = asyncio.get_running_loop().time() + 20
+        while True:
+            await _pause(1.2, 2.0)
+            info = await page.evaluate(_PEOPLE_JS)
+            if info.get("ready") or asyncio.get_running_loop().time() > deadline:
+                break
+            # The insights cards render lazily: nudge the page.
+            await page.mouse.wheel(0, random.randint(500, 900))
         info["url"] = url
         return info
 

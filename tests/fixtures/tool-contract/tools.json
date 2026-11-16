@@ -741,6 +741,45 @@
     "_meta": {
       "fastmcp": {
         "tags": [
+          "company",
+          "msgkit"
+        ]
+      }
+    },
+    "annotations": {
+      "openWorldHint": true,
+      "readOnlyHint": true
+    },
+    "description": "Open /company/<slug>/people/?facetCurrentFunction=<id> (one page load;\n8 = Engineering) and wait until the insights have rendered. With the\nfilter, \"N associated members\" and the pinned first row of \"What they\ndo\" are that function's headcount, the same for every viewer (the\n\"People highlights\" line is personalised and is not used).\n\nReturns {url, text, company_id, slug, ready}; ready=false means the\ninsights never appeared (retry later rather than trusting the text).",
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "company_slug": {
+          "type": "string"
+        },
+        "function_id": {
+          "default": 8,
+          "maximum": 100,
+          "minimum": 1,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "company_slug"
+      ],
+      "type": "object"
+    },
+    "name": "msgkit_company_people",
+    "outputSchema": {
+      "additionalProperties": true,
+      "type": "object"
+    },
+    "title": "msgkit: Company People (one function)"
+  },
+  {
+    "_meta": {
+      "fastmcp": {
+        "tags": [
           "msgkit",
           "person"
         ]
