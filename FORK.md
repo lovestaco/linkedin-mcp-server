@@ -4,9 +4,13 @@ Fork of [stickerdaniel/linkedin-mcp-server](https://github.com/stickerdaniel/lin
 (Apache-2.0) used by msgkit-server's lead-enrichment workers, which start it over
 stdio and call its tools directly (no LLM).
 
-Changes (on `main`; releases are tags `v<upstream>-msgkit.<n>`, which msgkit-server pins in
-`internal/limcp/client.go`, so a push here reaches no laptop until a msgkit-server release
-pins the new tag):
+Changes live on `main`. **msgkit-server workers follow `main`**: each laptop checks main's
+head commit every 15 minutes and restarts its browser on it between leads, so a push here
+reaches every laptop within about 15 minutes. Run the tests before pushing. Tags
+(`v<upstream>-msgkit.<n>`) are only the fallback compiled into msgkit-server
+(`ForkTag` in `internal/limcp/client.go`) for a laptop that cannot reach GitHub.
+
+Changes:
 
 - `linkedin_mcp_server/tools/msgkit.py` — tools that open exactly one page each
   and return small structured results:
