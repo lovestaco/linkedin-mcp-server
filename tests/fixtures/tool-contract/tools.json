@@ -716,6 +716,113 @@
     "_meta": {
       "fastmcp": {
         "tags": [
+          "msgkit"
+        ]
+      }
+    },
+    "annotations": {
+      "openWorldHint": true,
+      "readOnlyHint": true
+    },
+    "description": "Open the logged-in member's own profile (/in/me/) and return {name,\nprofile_url, premium} (premium is null when it cannot be told).",
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {},
+      "type": "object"
+    },
+    "name": "msgkit_account",
+    "outputSchema": {
+      "additionalProperties": true,
+      "type": "object"
+    },
+    "title": "msgkit: Logged-in Account"
+  },
+  {
+    "_meta": {
+      "fastmcp": {
+        "tags": [
+          "msgkit",
+          "person"
+        ]
+      }
+    },
+    "annotations": {
+      "openWorldHint": true,
+      "readOnlyHint": true
+    },
+    "description": "Read a person's newest activity from /in/<user>/recent-activity/all/\n(one page load; the main profile page is not opened).\n\nReturns {url, posts: [{index, lines, text, original_post_url,\nactor_links, share_url}], cards_seen, copy_errors}. share_url is the\nlink LinkedIn's \"Copy link to post\" gives (an lnkd.in short link).",
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "copy_links": {
+          "default": true,
+          "type": "boolean"
+        },
+        "limit": {
+          "default": 10,
+          "maximum": 30,
+          "minimum": 1,
+          "type": "integer"
+        },
+        "linkedin_username": {
+          "type": "string"
+        },
+        "max_scrolls": {
+          "default": 6,
+          "maximum": 20,
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "linkedin_username"
+      ],
+      "type": "object"
+    },
+    "name": "msgkit_person_activity",
+    "outputSchema": {
+      "additionalProperties": true,
+      "type": "object"
+    },
+    "title": "msgkit: Person Activity"
+  },
+  {
+    "_meta": {
+      "fastmcp": {
+        "tags": [
+          "msgkit",
+          "person"
+        ]
+      }
+    },
+    "annotations": {
+      "openWorldHint": true,
+      "readOnlyHint": true
+    },
+    "description": "Open /in/<user>/details/experience/ (one page load) and return the\nexperience entries in page order: {url, entries: [{url, lines}]}.\nThe first entry whose lines contain \"Present\" is the current job;\ncompany links there are numeric (/company/<id>/).",
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "linkedin_username": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "linkedin_username"
+      ],
+      "type": "object"
+    },
+    "name": "msgkit_person_company",
+    "outputSchema": {
+      "additionalProperties": true,
+      "type": "object"
+    },
+    "title": "msgkit: Person Current Company"
+  },
+  {
+    "_meta": {
+      "fastmcp": {
+        "tags": [
           "actions",
           "messaging"
         ]
