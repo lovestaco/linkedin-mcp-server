@@ -28,3 +28,11 @@ Changes:
 
 Upstream is otherwise untouched; to take a new upstream release, merge `upstream/main` into
 `main`, run the tests and tag again.
+
+## Staying current with upstream
+
+msgkit-server keeps this fork level with upstream automatically (its `internal/forksync`): the
+sync laptop merges `upstream/main`, a Claude Code session resolves conflicts and adapts
+`tools/msgkit.py`, the result is verified, tested in a real browser and pushed here. Status and
+history are on msgkit-server's LinkedIn › Settings page. If it fails, nothing is pushed and the
+app shows a red banner until someone merges by hand.
