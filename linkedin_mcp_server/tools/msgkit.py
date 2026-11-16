@@ -282,6 +282,66 @@ def register_msgkit_tools(
         return info
 
     @mcp.tool(
+        timeout=max(tool_timeout, 180),
+        title="msgkit: Idle Like a Reader",
+        annotations={"readOnlyHint": True, "openWorldHint": False},
+        tags={"msgkit"},
+    )
+    @tool_errors
+    async def msgkit_idle(
+        seconds: Annotated[float, Field(ge=1, le=150)],
+        ctx: Context,
+    ) -> dict[str, Any]:
+        """
+        Spend `seconds` on the page that is already open the way a person
+        reading it would: small uneven wheel scrolls (mostly down, sometimes
+        back up), smooth mouse moves and reading pauses. Never clicks, types
+        or navigates, so it opens no new page. On a blank or non-LinkedIn page
+        it only waits. Returns {seconds, scrolls, moves, url}.
+        """
+        extractor = await get_ready_extractor(ctx, tool_name="msgkit_idle")
+        session, _ = _parts(extractor)
+        page = session.page
+        loop = asyncio.get_running_loop()
+        deadline = loop.time() + seconds
+        url = page.url or ""
+        scrolls = moves = 0
+        if "linkedin.com" not in url:
+            await asyncio.sleep(seconds)
+            return {"seconds": seconds, "scrolls": 0, "moves": 0, "url": url}
+
+        vp = page.viewport_size or {"width": 1280, "height": 800}
+        w, h = vp["width"], vp["height"]
+        x, y = random.uniform(0.3, 0.7) * w, random.uniform(0.3, 0.7) * h
+
+        async def rest(lo: float, hi: float) -> None:
+            left = deadline - loop.time()
+            if left > 0:
+                await asyncio.sleep(min(left, random.uniform(lo, hi)))
+
+        while loop.time() < deadline:
+            r = random.random()
+            try:
+                if r < 0.55:  # scroll a little, in uneven wheel ticks
+                    direction = -1 if random.random() < 0.18 else 1
+                    for _ in range(random.randint(1, 4)):
+                        await page.mouse.wheel(0, direction * random.randint(60, 260))
+                        await asyncio.sleep(random.uniform(0.05, 0.25))
+                    scrolls += 1
+                elif r < 0.85:  # drift the pointer somewhere else on the page
+                    nx = min(max(x + random.gauss(0, w * 0.18), 20), w - 20)
+                    ny = min(max(y + random.gauss(0, h * 0.15), 80), h - 20)
+                    await page.mouse.move(nx, ny, steps=random.randint(8, 30))
+                    x, y = nx, ny
+                    moves += 1
+                # else: just keep reading
+            except Exception:  # a detached page or closed overlay: stop moving, keep waiting
+                await rest(deadline - loop.time(), deadline - loop.time())
+                break
+            await rest(1.5, 6.0)
+        return {"seconds": seconds, "scrolls": scrolls, "moves": moves, "url": url}
+
+    @mcp.tool(
         timeout=tool_timeout,
         title="msgkit: Logged-in Account",
         annotations={"readOnlyHint": True, "openWorldHint": True},

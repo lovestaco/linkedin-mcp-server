@@ -780,6 +780,40 @@
     "_meta": {
       "fastmcp": {
         "tags": [
+          "msgkit"
+        ]
+      }
+    },
+    "annotations": {
+      "openWorldHint": false,
+      "readOnlyHint": true
+    },
+    "description": "Spend `seconds` on the page that is already open the way a person\nreading it would: small uneven wheel scrolls (mostly down, sometimes\nback up), smooth mouse moves and reading pauses. Never clicks, types\nor navigates, so it opens no new page. On a blank or non-LinkedIn page\nit only waits. Returns {seconds, scrolls, moves, url}.",
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "seconds": {
+          "maximum": 150,
+          "minimum": 1,
+          "type": "number"
+        }
+      },
+      "required": [
+        "seconds"
+      ],
+      "type": "object"
+    },
+    "name": "msgkit_idle",
+    "outputSchema": {
+      "additionalProperties": true,
+      "type": "object"
+    },
+    "title": "msgkit: Idle Like a Reader"
+  },
+  {
+    "_meta": {
+      "fastmcp": {
+        "tags": [
           "msgkit",
           "person"
         ]

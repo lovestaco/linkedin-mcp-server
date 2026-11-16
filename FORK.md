@@ -23,6 +23,9 @@ Changes:
     waits for the insights to render and returns the page text, the company's numeric id
     and `ready`. The filter makes the count the same for every viewer (the "People
     highlights" line is personalised).
+  - `msgkit_idle`: spends N seconds on the page already open like a reader (small scrolls,
+    mouse moves, pauses; no clicks, no navigation). msgkit-server calls it instead of sleeping
+    between pages.
   - `msgkit_account`: the logged-in member's name, profile URL and Premium status.
 - `server.py` registers them; `tests/fixtures/tool-contract/tools.json` records them.
 
