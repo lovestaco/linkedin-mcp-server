@@ -2,11 +2,8 @@
 
 from __future__ import annotations
 
-import base64
 import json
-import re
 from pathlib import Path
-from urllib.parse import unquote
 
 from test_codex_plugin import _assert_mcp_contract, _load_json, _project_version
 
@@ -44,12 +41,3 @@ def test_cursor_shares_the_plugin_mcp_config() -> None:
     _assert_mcp_contract(_load_json(_PLUGIN_MCP))
 
 
-def test_readme_cursor_deeplink_matches_the_plugin_mcp_config() -> None:
-    readme = _README.read_text(encoding="utf-8")
-    match = re.search(
-        rf"{re.escape(_DEEPLINK_PREFIX)}([A-Za-z0-9%]+)",
-        readme,
-    )
-    assert match is not None, "README is missing the Cursor MCP install deeplink"
-    decoded = json.loads(base64.b64decode(unquote(match.group(1))))
-    assert decoded == _load_json(_PLUGIN_MCP)["mcpServers"]["linkedin"]

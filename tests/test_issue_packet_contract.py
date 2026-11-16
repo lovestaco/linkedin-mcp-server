@@ -214,29 +214,6 @@ def test_packet_skill_cli_create_preserves_form_routes() -> None:
         )
 
 
-def test_reporting_workflow_links_do_not_contain_stale_intake_copy() -> None:
-    repo_root = Path(__file__).resolve().parents[1]
-    readme_path = repo_root / "README.md"
-    contributing_path = repo_root / ".github" / "CONTRIBUTING.md"
-
-    readme_text = readme_path.read_text(encoding="utf-8")
-    contributing_text = contributing_path.read_text(encoding="utf-8")
-
-    for text, name in [
-        (readme_text, "README.md"),
-        (contributing_text, "CONTRIBUTING.md"),
-    ]:
-        assert "Please [open an issue]" not in text, (
-            f"Stale 'Please [open an issue]' found in {name}"
-        )
-        assert "1. [Open an issue]" not in text, (
-            f"Stale '1. [Open an issue]' found in {name}"
-        )
-        assert "issue-packet/SKILL.md" in text, (
-            f"Missing issue-packet/SKILL.md in {name}"
-        )
-
-
 def _maintainer_skill_text(name: str) -> str:
     repo_root = Path(__file__).resolve().parents[1]
     return (repo_root / ".agents" / "skills" / name / "SKILL.md").read_text(

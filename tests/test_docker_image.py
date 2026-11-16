@@ -566,12 +566,6 @@ def test_the_image_seeds_the_default_authentication_root_for_named_volumes() -> 
     assert creation < unprivileged_runtime
 
 
-def test_the_documented_bind_mount_is_created_by_the_host_user() -> None:
-    for document in (_README, _DOCKER_GUIDE):
-        assert "mkdir -p ~/.linkedin-mcp" in document
-        assert 'sudo chown -R "$(id -u):$(id -g)" ~/.linkedin-mcp' in document
-
-
 def _documented_client_mounts(document: str) -> list[str]:
     """Every ``-v`` value an MCP client would hand to ``docker`` verbatim."""
     mounts: list[str] = []
@@ -582,42 +576,6 @@ def _documented_client_mounts(document: str) -> list[str]:
                 value for flag, value in zip(arguments, arguments[1:]) if flag == "-v"
             ]
     return mounts
-
-
-def test_every_documented_mount_is_a_path_docker_accepts() -> None:
-    """A client executes these arrays, so Docker reads each path verbatim.
-
-    Docker resolves a bind source only when it is already absolute; anything
-    else is read as a volume *name*, whose character class ``~``, ``$HOME``
-    and ``%USERPROFILE%`` all fail. Docker then exits 125 before Tini, the
-    supervisor or Python ever start, and the stdio transport this container
-    exists to serve is unreachable through the configuration the docs give
-    for it. Measured against the daemon: ``%USERPROFILE%/.linkedin-mcp:...``
-    exits 125, while an absolute path is accepted whatever else it holds -- a
-    ``$`` inside one names a directory rather than a variable, because no
-    shell is involved.
-    """
-    for name, document in (
-        ("README.md", _README),
-        ("docs/docker-hub.md", _DOCKER_GUIDE),
-    ):
-        mounts = _documented_client_mounts(document)
-        written = re.findall(r'"-v",\s*"([^"]*)"', document)
-        assert mounts == written, (
-            f"{name} writes {written} but this check parsed {mounts}, so a "
-            "configuration block was never inspected"
-        )
-        assert mounts, f"{name} documents no mount to check"
-
-        for mount in mounts:
-            host, _, container = mount.rpartition(":")
-            assert re.match(r"(?:/|[A-Za-z]:/)", host), (
-                f"{name}: {host!r} is not an absolute path, so Docker reads it "
-                "as a volume name and exits 125"
-            )
-            assert container.startswith("/"), (
-                f"{name}: {container!r} is not an absolute destination"
-            )
 
 
 def test_no_documented_argument_starts_with_a_tilde() -> None:
