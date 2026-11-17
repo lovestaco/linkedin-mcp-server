@@ -780,6 +780,56 @@
     "_meta": {
       "fastmcp": {
         "tags": [
+          "msgkit",
+          "person"
+        ]
+      }
+    },
+    "annotations": {
+      "destructiveHint": true,
+      "openWorldHint": true
+    },
+    "description": "Send one LinkedIn connection request on a single profile view and read\nthe profile-tracking fields off that same page.\n\nOpens /in/<user>/ once, reads followers, place, country, company,\ncompany_position and headline, then (unless dry_run) opens the invite\ndialog from the Connect button and sends it without a note (or with\n``note``). The result is checked on the same page, not by reloading.\n\nReturns {url, status, message, via, note_sent, would_send, fields,\nextra_profile_view}. Statuses: sent, pending (already pending),\nalready_connected, follow_only, connect_unavailable, self,\ncustom_note_limit_reached, dry_run, sent_unverified (the invite went out but the\npage never showed it: do not retry), send_failed, unavailable.",
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "dry_run": {
+          "default": false,
+          "description": "Read the profile and report what would happen; send nothing.",
+          "type": "boolean"
+        },
+        "linkedin_username": {
+          "type": "string"
+        },
+        "note": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Invitation note. Omit to send without a note."
+        }
+      },
+      "required": [
+        "linkedin_username"
+      ],
+      "type": "object"
+    },
+    "name": "msgkit_connect",
+    "outputSchema": {
+      "additionalProperties": true,
+      "type": "object"
+    },
+    "title": "msgkit: Connect"
+  },
+  {
+    "_meta": {
+      "fastmcp": {
+        "tags": [
           "msgkit"
         ]
       }
@@ -823,7 +873,7 @@
       "openWorldHint": true,
       "readOnlyHint": true
     },
-    "description": "Read a person's newest activity from /in/<user>/recent-activity/all/\n(one page load; the main profile page is not opened).\n\nReturns {url, posts: [{index, lines, text, original_post_url,\nactor_links, share_url}], cards_seen, copy_errors}. share_url is the\nlink LinkedIn's \"Copy link to post\" gives (an lnkd.in short link).",
+    "description": "Read a person's newest activity from /in/<user>/recent-activity/all/\n(one page load; the main profile page is not opened).\n\nReturns {url, posts: [{index, lines, text, original_post_url,\nactor_links, share_url}], cards_seen, copy_errors, followers_text, message_url}.\nshare_url is the link LinkedIn's \"Copy link to post\" gives (an lnkd.in\nshort link); followers_text is the person's \"N followers\" line or null;\nmessage_url is the Message button's link (a conversation or the compose link) or null.",
     "inputSchema": {
       "additionalProperties": false,
       "properties": {

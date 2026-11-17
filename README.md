@@ -22,6 +22,7 @@ structured results (no screenshots, no free-form page dumps).
 | `msgkit_person_company` | `/in/<user>/details/experience/` | the experience entries in page order; the one marked "Present" is the current job, with its numeric company link |
 | `msgkit_company_people` | `/company/<slug>/people/?facetCurrentFunction=8` (Engineering) | the page text, the company's numeric id and a `ready` flag |
 | `msgkit_account` | `/in/me/` | the logged-in member's name, profile URL and whether the account is Premium |
+| `msgkit_connect` | `/in/<user>/` (one view) | sends one connection request (no note unless given) and returns the profile fields read off that page: followers, place, country, company, company position, headline |
 | `msgkit_idle` | nothing (stays on the open page) | spends N seconds like a person reading: small uneven scrolls, mouse drifts, pauses |
 
 ### Details worth knowing
@@ -42,6 +43,13 @@ structured results (no screenshots, no free-form page dumps).
   entries read `Company` / `26 yrs 4 mos`.
 - **Premium detection** (`msgkit_account`) looks for the absence of the "Try Premium" prompt together
   with Premium icons, and returns `null` when it cannot tell.
+- **`msgkit_connect` costs one profile view.** It reads the page, opens the invite dialog from the
+  profile's own Connect link, chooses "Send without a note" (or sends `note`), and checks the result on
+  the same page instead of reloading. It reports `pending` / `already_connected` without sending when
+  the person is already invited or connected, and `sent_unverified` when the dialog closed but the page
+  still shows Connect (check the profile before sending again). `dry_run=true` reads everything and
+  sends nothing. If LinkedIn does not open the dialog from the page, it uses the invite page and says
+  so (`via: "deeplink"`, `extra_profile_view: true`).
 - **`msgkit_idle` never clicks, types or navigates**, so it can be used freely between page loads
   without adding page views.
 
