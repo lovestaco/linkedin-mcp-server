@@ -10,6 +10,8 @@ structured data instead of the whole page text:
   through its own "Copy link to post" menu item.
 - msgkit_person_company: /in/<user>/details/experience/, for the current company link.
 - msgkit_account: who this browser is logged in as, and whether it is Premium.
+- msgkit_dm_check: read-only check of one person before a DM is prepared (degree, URN,
+  existing conversation); sends nothing.
 - msgkit_connect: send one connection request (no note unless given) on a single
   profile view, and read the profile-tracking fields off that same page.
 
@@ -231,6 +233,54 @@ _CONNECT_JS = r"""(mode) => {
 
 _CONNECT_TARGET = '[data-msgkit-connect="1"]'
 _MORE_TARGET = '[data-msgkit-more="1"]'
+
+# --- direct messages: read-only check of one person before a DM is ever prepared ---
+#
+# The profile's own "Message" link (checked on live pages, 2026-11): a compose link
+# /messaging/compose/?profileUrn=urn:li:fsd_profile:ACoAA...&recipient=... (the second
+# compose link, "Say hello", carries a `body` parameter and is skipped). The compose
+# page keeps its address but shows an existing conversation inline: the same page held
+# 102 msg-s-event nodes for a person with a long thread and 0 for people without one.
+_DM_PROFILE_JS = r"""() => {
+  const vis = e => { const r = e.getBoundingClientRect(); return r.width > 0 && r.height > 0; };
+  const main = document.querySelector('main');
+  if (!main) return { ok: false };
+  const sections = [...document.querySelectorAll('[componentkey^="com.linkedin.sdui.profile.card"]')]
+    .map(e => e.closest('section')).filter(Boolean);
+  const h2 = sections[1] && sections[1].querySelector('h2');
+  const text = main.innerText || '';
+  const d = text.match(/[·•]\s*(1st|2nd|3rd)\b/);
+  const links = [...main.querySelectorAll('a[href*="/messaging/compose/"]')].filter(vis)
+    .filter(a => { try { return !new URL(a.href).searchParams.has('body'); } catch (e) { return true; } });
+  const a = links[0] || null;
+  let urn = null;
+  if (a) { try { urn = new URL(a.href).searchParams.get('profileUrn'); } catch (e) {} }
+  return {
+    ok: true,
+    name: h2 ? h2.innerText.trim() : null,
+    title: document.title,
+    degree: d ? d[1] : null,
+    compose_url: a ? a.href : null,
+    profile_urn: urn,
+  };
+}"""
+
+# The compose page after it settled: the conversation shown with the composer.
+_DM_THREAD_JS = r"""() => {
+  const events = document.querySelectorAll('[class*="msg-s-event"]').length;
+  const list = document.querySelector('[class*="msg-s-message-list-content"], [class*="msg-s-message-list"]');
+  const senders = [...new Set([...document.querySelectorAll('[class*="msg-s-message-group__name"], [class*="msg-s-event-listitem__name"]')]
+    .map(e => (e.innerText || '').trim()).filter(Boolean))].slice(0, 6);
+  const text = list ? (list.innerText || '').replace(/\n{3,}/g, '\n\n').trim() : '';
+  return {
+    events,
+    composer: !!document.querySelector('[contenteditable="true"][role="textbox"], .msg-form__contenteditable'),
+    senders,
+    text: text.slice(-3500),
+    path: location.pathname,
+  };
+}"""
+
 
 _INVITE_ANCHOR = 'a[href*="/preload/custom-invite/"][href*="vanityName={u}"]'
 
@@ -690,6 +740,73 @@ def register_msgkit_tools(
         session = await _open(extractor, "https://www.linkedin.com/in/me/")
         await _pause(1.5, 3.0)
         return await session.page.evaluate(_ACCOUNT_JS)
+
+    @mcp.tool(
+        timeout=tool_timeout,
+        title="msgkit: DM check (read-only)",
+        annotations={"readOnlyHint": True, "openWorldHint": True},
+        tags={"person", "msgkit"},
+    )
+    @tool_errors
+    async def msgkit_dm_check(linkedin_username: str, ctx: Context) -> dict[str, Any]:
+        """
+        Read-only check of one person before a direct message is prepared. Sends nothing
+        and types nothing.
+
+        Opens /in/<user>/ once (degree, name, the Message link and the profile URN it
+        carries), then opens that Message link's compose page, which shows any existing
+        conversation inline, and reads it. Returns {url, name, degree, has_message,
+        profile_urn, compose_url, conversation: {exists, events, senders, text, composer}}.
+        ``text`` is the tail of the visible conversation (up to ~3500 characters).
+        """
+        username = normalize_person_identifier(linkedin_username)
+        extractor = await get_ready_extractor(ctx, tool_name="msgkit_dm_check")
+        url = f"https://www.linkedin.com/in/{username}/"
+        session = await _open(extractor, url)
+        await _pause(1.5, 3.0)
+        try:
+            prof = await session.page.evaluate(_DM_PROFILE_JS)
+        except Exception:
+            prof = {"ok": False}
+        out: dict[str, Any] = {
+            "url": url,
+            "name": (prof or {}).get("name"),
+            "degree": (prof or {}).get("degree"),
+            "has_message": bool((prof or {}).get("compose_url")),
+            "profile_urn": (prof or {}).get("profile_urn"),
+            "compose_url": (prof or {}).get("compose_url"),
+            "conversation": {
+                "exists": False,
+                "events": 0,
+                "senders": [],
+                "text": "",
+                "composer": False,
+            },
+            "read": bool((prof or {}).get("ok")),
+        }
+        compose = out["compose_url"]
+        if not compose or out["degree"] != "1st":
+            return out  # nothing to read: not connected here, or no Message action
+        await _pause(1.0, 2.0)
+        session = await _open(extractor, compose)
+        info: dict[str, Any] = {}
+        for _ in range(16):  # the thread loads after the page: wait up to ~8 s
+            await asyncio.sleep(0.5)
+            try:
+                info = await session.page.evaluate(_DM_THREAD_JS)
+            except Exception:
+                info = {}
+            if info.get("events") or (info.get("composer") and _ >= 6):
+                break
+        out["conversation"] = {
+            "exists": bool(info.get("events")),
+            "events": int(info.get("events") or 0),
+            "senders": info.get("senders") or [],
+            "text": info.get("text") or "",
+            "composer": bool(info.get("composer")),
+            "path": info.get("path"),
+        }
+        return out
 
     @mcp.tool(
         timeout=tool_timeout,

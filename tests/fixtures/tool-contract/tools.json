@@ -830,6 +830,39 @@
     "_meta": {
       "fastmcp": {
         "tags": [
+          "msgkit",
+          "person"
+        ]
+      }
+    },
+    "annotations": {
+      "openWorldHint": true,
+      "readOnlyHint": true
+    },
+    "description": "Read-only check of one person before a direct message is prepared. Sends nothing\nand types nothing.\n\nOpens /in/<user>/ once (degree, name, the Message link and the profile URN it\ncarries), then opens that Message link's compose page, which shows any existing\nconversation inline, and reads it. Returns {url, name, degree, has_message,\nprofile_urn, compose_url, conversation: {exists, events, senders, text, composer}}.\n``text`` is the tail of the visible conversation (up to ~3500 characters).",
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "linkedin_username": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "linkedin_username"
+      ],
+      "type": "object"
+    },
+    "name": "msgkit_dm_check",
+    "outputSchema": {
+      "additionalProperties": true,
+      "type": "object"
+    },
+    "title": "msgkit: DM check (read-only)"
+  },
+  {
+    "_meta": {
+      "fastmcp": {
+        "tags": [
           "msgkit"
         ]
       }
