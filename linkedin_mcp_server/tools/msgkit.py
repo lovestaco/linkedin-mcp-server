@@ -34,6 +34,7 @@ from linkedin_mcp_server.config.schema import DEFAULT_TOOL_TIMEOUT_SECONDS
 from linkedin_mcp_server.dependencies import get_ready_extractor, tool_errors
 from linkedin_mcp_server.linkedin import connection
 from linkedin_mcp_server.linkedin.identifiers import normalize_person_identifier
+from linkedin_mcp_server.tools.msgkit_connections import CONNECTIONS_URL, list_connections
 from linkedin_mcp_server.tools.msgkit_profile import build_fields
 
 logger = logging.getLogger(__name__)
@@ -740,6 +741,57 @@ def register_msgkit_tools(
         session = await _open(extractor, "https://www.linkedin.com/in/me/")
         await _pause(1.5, 3.0)
         return await session.page.evaluate(_ACCOUNT_JS)
+
+    @mcp.tool(
+        timeout=max(tool_timeout, 3600),
+        title="msgkit: List connections",
+        annotations={"readOnlyHint": True, "openWorldHint": True},
+        tags={"msgkit"},
+    )
+    @tool_errors
+    async def msgkit_list_connections(
+        ctx: Context,
+        stop_at_profile: str = "",
+        max_rows: Annotated[int, Field(ge=1, le=20000)] = 5000,
+        max_seconds: Annotated[int, Field(ge=30, le=3000)] = 2400,
+        pause_min_s: Annotated[float, Field(ge=1, le=60)] = 5.0,
+        pause_max_s: Annotated[float, Field(ge=1, le=120)] = 10.0,
+    ) -> dict[str, Any]:
+        """
+        List the logged-in member's connections, newest first, from
+        /mynetwork/invite-connect/connections/ (one page load, then scrolling).
+
+        Stops at ``stop_at_profile`` (a profile link already stored: it and everything
+        after it are left out), at the end of the list, when three scrolls load
+        nothing new, or at max_rows / max_seconds.
+
+        Returns {rows: [{profile_link, name, tagline, connected_on, message_link}],
+        stopped_reason, total_visible, scrolls, seconds}. stopped_reason is
+        "checkpoint", "end", "stale", "limit" (rows are good, the list is not finished)
+        or "empty" (the page showed no connections: not signed in, blocked, or the
+        page changed; empty_text holds what the page said).
+        """
+        extractor = await get_ready_extractor(ctx, tool_name="msgkit_list_connections")
+        session = await _open(extractor, CONNECTIONS_URL)
+        page = session.page
+        try:
+            await page.wait_for_function(
+                "() => Array.from(document.querySelectorAll('p')).some(p => (p.innerText || '').trim().startsWith('Connected on '))",
+                timeout=20000,
+            )
+        except Exception:
+            pass  # list_connections reports an empty first read as stopped_reason "empty"
+        out = await list_connections(
+            page,
+            stop_at_profile=stop_at_profile,
+            max_rows=max_rows,
+            max_seconds=max_seconds,
+            pause_min_s=pause_min_s,
+            pause_max_s=max(pause_max_s, pause_min_s),
+            pause=_pause,
+        )
+        out["url"] = CONNECTIONS_URL
+        return out
 
     @mcp.tool(
         timeout=tool_timeout,

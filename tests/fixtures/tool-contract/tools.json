@@ -897,6 +897,60 @@
     "_meta": {
       "fastmcp": {
         "tags": [
+          "msgkit"
+        ]
+      }
+    },
+    "annotations": {
+      "openWorldHint": true,
+      "readOnlyHint": true
+    },
+    "description": "List the logged-in member's connections, newest first, from\n/mynetwork/invite-connect/connections/ (one page load, then scrolling).\n\nStops at ``stop_at_profile`` (a profile link already stored: it and everything\nafter it are left out), at the end of the list, when three scrolls load\nnothing new, or at max_rows / max_seconds.\n\nReturns {rows: [{profile_link, name, tagline, connected_on, message_link}],\nstopped_reason, total_visible, scrolls, seconds}. stopped_reason is\n\"checkpoint\", \"end\", \"stale\", \"limit\" (rows are good, the list is not finished)\nor \"empty\" (the page showed no connections: not signed in, blocked, or the\npage changed; empty_text holds what the page said).",
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "max_rows": {
+          "default": 5000,
+          "maximum": 20000,
+          "minimum": 1,
+          "type": "integer"
+        },
+        "max_seconds": {
+          "default": 2400,
+          "maximum": 3000,
+          "minimum": 30,
+          "type": "integer"
+        },
+        "pause_max_s": {
+          "default": 10.0,
+          "maximum": 120,
+          "minimum": 1,
+          "type": "number"
+        },
+        "pause_min_s": {
+          "default": 5.0,
+          "maximum": 60,
+          "minimum": 1,
+          "type": "number"
+        },
+        "stop_at_profile": {
+          "default": "",
+          "type": "string"
+        }
+      },
+      "type": "object"
+    },
+    "name": "msgkit_list_connections",
+    "outputSchema": {
+      "additionalProperties": true,
+      "type": "object"
+    },
+    "title": "msgkit: List connections"
+  },
+  {
+    "_meta": {
+      "fastmcp": {
+        "tags": [
           "msgkit",
           "person"
         ]

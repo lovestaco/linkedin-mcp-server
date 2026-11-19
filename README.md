@@ -23,6 +23,7 @@ structured results (no screenshots, no free-form page dumps).
 | `msgkit_company_people` | `/company/<slug>/people/?facetCurrentFunction=8` (Engineering) | the page text, the company's numeric id and a `ready` flag |
 | `msgkit_account` | `/in/me/` | the logged-in member's name, profile URL and whether the account is Premium |
 | `msgkit_connect` | `/in/<user>/` (one view) | sends one connection request (no note unless given) and returns the profile fields read off that page: followers, place, country, company, company position, headline |
+| `msgkit_list_connections` | `/mynetwork/invite-connect/connections/` (one page load, then scrolling) | the account's connections newest first (name, link, tagline, connected-on, message link), stopping at a given profile, at the end, or after three scrolls that load nothing; an empty page is reported as `empty`, never as up to date |
 | `msgkit_idle` | nothing (stays on the open page) | spends N seconds like a person reading: small uneven scrolls, mouse drifts, pauses |
 
 ### Details worth knowing
