@@ -347,6 +347,28 @@ async def _connect_control(page: Any, mode: str = "top") -> dict[str, Any]:
         return {"found": False}
 
 
+# What the top card offered, for the failure message when no Connect control is found: the
+# visible button/link labels near the profile header and any open menu's items (text only).
+_CONNECT_DIAG_JS = r"""() => {
+  const vis = e => { const r = e.getBoundingClientRect(); return r.width > 0 && r.height > 0; };
+  const lab = e => ((e.getAttribute('aria-label') || e.innerText || '').trim().replace(/\s+/g, ' ')).slice(0, 28);
+  const main = document.querySelector('main');
+  const compose = main && [...main.querySelectorAll('a[href*="/messaging/compose/"]')].filter(vis)[0];
+  let row = compose;
+  for (let i = 0; row && i < 4; i++) row = row.parentElement;
+  const near = row ? [...row.querySelectorAll('button, a')].filter(vis).map(lab).filter(Boolean) : [];
+  const menus = [...document.querySelectorAll('[role="menu"]')].filter(vis).map(m => (m.innerText || '').trim().replace(/\s+/g, ' ').slice(0, 160));
+  return { compose: !!compose, w: window.innerWidth, h: window.innerHeight, near: [...new Set(near)].slice(0, 12), menus };
+}"""
+
+
+async def _connect_diag(page: Any) -> str:
+    try:
+        return str(await page.evaluate(_CONNECT_DIAG_JS))[:700]
+    except Exception:
+        return "diag unavailable"
+
+
 async def _open_more_for_connect(page: Any, conn: Any) -> dict[str, Any]:
     """Open the top card's More menu and find Connect in it ({found: False} if none)."""
     if not (await _connect_control(page, "more")).get("found"):
@@ -989,7 +1011,7 @@ def register_msgkit_tools(
             out.update(
                 status="follow_only" if state == "follow_only" else "unavailable",
                 message="LinkedIn did not offer a Connect action for this profile."
-                f" (state={state}, looked {tries}x, control={ctl})",
+                f" (state={state}, looked {tries}x, control={ctl}, page={await _connect_diag(page)})",
             )
             return out
 
