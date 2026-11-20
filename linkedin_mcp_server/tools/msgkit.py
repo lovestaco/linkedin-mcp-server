@@ -931,6 +931,7 @@ def register_msgkit_tools(
         # profiles led by Follow / Message, an item in the three-dots menu.
         ctl = await _connect_control(page, "top")
         via_menu = False
+        tries = 1
         if (
             not ctl.get("found")
             and not blocked
@@ -939,6 +940,22 @@ def register_msgkit_tools(
         ):
             ctl = await _open_more_for_connect(page, conn)  # left open when found
             via_menu = bool(ctl.get("found"))
+            # About a third of the profiles led by Follow / Message failed here although
+            # Connect sat in their More menu: the top card's button row had not finished
+            # drawing yet (or the menu opened late). Look again, up to twice, with a pause.
+            while not ctl.get("found") and tries < 3:
+                tries += 1
+                await _pause(2.5, 4.0)
+                ctl = await _connect_control(page, "top")
+                if not ctl.get("found"):
+                    ctl = await _open_more_for_connect(page, conn)
+                    via_menu = bool(ctl.get("found"))
+                else:
+                    via_menu = False
+                if ctl.get("found"):
+                    signals = await conn._read_action_signals(username)
+                    state = connection.detect_connection_state(signals)
+                    break
         out["connect_control"] = ctl
         if ctl.get("found") and not blocked:
             # The profile's own Connect control is there: whatever the stock
@@ -971,7 +988,8 @@ def register_msgkit_tools(
         if state != "connectable":
             out.update(
                 status="follow_only" if state == "follow_only" else "unavailable",
-                message="LinkedIn did not offer a Connect action for this profile.",
+                message="LinkedIn did not offer a Connect action for this profile."
+                f" (state={state}, looked {tries}x, control={ctl})",
             )
             return out
 
