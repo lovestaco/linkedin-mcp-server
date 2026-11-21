@@ -424,7 +424,14 @@ _TAG_SEND_JS = r"""() => {
     if (btns.length < 2 || btns.length > 6) continue;     // dismiss + primary (+ add a note)
     const last = btns[btns.length - 1];
     last.setAttribute('data-msgkit-send', '1');
-    return { found: true, text: (last.innerText || '').trim(), buttons: btns.length };
+    // Some people can only be invited with their email address: the dialog then holds an input and
+    // keeps Send disabled until it is filled.
+    const inputs = [...d.querySelectorAll('input:not([type="hidden"]):not([type="checkbox"]):not([type="radio"])')].filter(vis).length;
+    return {
+      found: true, text: (last.innerText || '').trim(), buttons: btns.length, inputs,
+      disabled: last.disabled || last.getAttribute('aria-disabled') === 'true',
+      says: (d.innerText || '').trim().replace(/\s+/g, ' ').slice(0, 300),
+    };
   }
   return { found: false };
 }"""
@@ -451,8 +458,13 @@ _DIALOG_OPEN_JS = r"""() => {
   return deep(document, 'dialog[open], .send-invite').filter(vis).length;
 }"""
 # What LinkedIn says after a send (a toast or alert), for the result and the log.
+# A video on the page has its own status line ("Muted", "Play"...): never a notice from LinkedIn
+# (on 2026-11-21 "Muted" was taken for the send's answer and a sent invitation was reported failed).
 _NOTICES_JS = r"""() => [...document.querySelectorAll('[role="alert"], [role="status"], [class*="toast" i]')]
-  .map(e => (e.innerText || '').trim().replace(/\s+/g, ' ')).filter(Boolean).slice(0, 3).join(' | ').slice(0, 300)"""
+  .filter(e => !e.closest('video, audio, [class*="video" i], [class*="media-player" i], [class*="vjs" i]'))
+  .map(e => (e.innerText || '').trim().replace(/\s+/g, ' '))
+  .filter(t => t && !/^(un)?muted$|^(play|pause|playing|paused|replay|loaded:?.*)$/i.test(t))
+  .slice(0, 5).map(t => t.slice(0, 160))"""
 
 
 async def _invite_dialog_open(page: Any, conn: Any, timeout_s: float = 5.0) -> bool:
@@ -482,8 +494,12 @@ async def _dialog_closed_within(page: Any, seconds: float) -> bool:
     return False
 
 
-async def _send_without_note(page: Any, trace: list[str]) -> bool:
-    """Click the invite dialog's primary button ("Send without a note"); True once the dialog closed.
+async def _send_without_note(page: Any, trace: list[str]) -> tuple[bool, str | None]:
+    """Click the invite dialog's primary button ("Send without a note"); (True, None) once the dialog closed.
+
+    (False, what the dialog says) when LinkedIn will not take the request from this dialog at all:
+    Send stays disabled, or the dialog asks for more (the person's email address). Nothing is
+    clicked then, and the caller must not try another way.
 
     A real click first; if the dialog is still up, the same click forced past any overlay, then
     the page's own element.click() (what the msgkit extension does), then Enter on the focused
@@ -496,8 +512,8 @@ async def _send_without_note(page: Any, trace: list[str]) -> bool:
             tagged = await page.evaluate(_TAG_SEND_JS)
         except Exception as exc:
             trace.append(f"tag failed: {exc}")
-            return False
-        if tagged.get("found"):
+            return False, None
+        if tagged.get("found") and not tagged.get("disabled") and not tagged.get("inputs"):
             break
         await asyncio.sleep(0.5)
     if not tagged.get("found"):
@@ -506,8 +522,12 @@ async def _send_without_note(page: Any, trace: list[str]) -> bool:
         except Exception as exc:
             seen = f"diag failed: {exc}"
         trace.append(f"send button not found; page has: {seen}")
-        return False
+        return False, None
     trace.append(f"send button {tagged.get('text')!r} of {tagged.get('buttons')}")
+    if tagged.get("disabled") or tagged.get("inputs"):
+        says = str(tagged.get("says") or "")
+        trace.append(("send button disabled" if tagged.get("disabled") else "dialog asks for more") + f"; it says: {says[:200]}")
+        return False, says or "the Send button stayed disabled"
     btn = page.locator(_SEND_TARGET).first
     await _pause(0.5, 1.2)
     steps = [
@@ -524,16 +544,22 @@ async def _send_without_note(page: Any, trace: list[str]) -> bool:
             continue
         if await _dialog_closed_within(page, 5.0):
             trace.append(f"{name}: dialog closed")
-            return True
+            return True, None
         trace.append(f"{name}: dialog still open")
-    return False
-
-
-async def _page_notices(page: Any) -> str:
-    try:
-        return await page.evaluate(_NOTICES_JS) or ""
+    try:  # what the dialog that would not close says, for the failure message
+        again = await page.evaluate(_TAG_SEND_JS)
+        if again.get("says"):
+            trace.append(f"dialog says: {str(again['says'])[:200]}")
     except Exception:
-        return ""
+        pass
+    return False, None
+
+
+async def _page_notices(page: Any) -> list[str]:
+    try:
+        return list(await page.evaluate(_NOTICES_JS) or [])
+    except Exception:
+        return []
 
 
 async def _pause(lo: float, hi: float) -> None:
@@ -1078,9 +1104,30 @@ def register_msgkit_tools(
 
         trace: list[str] = []
         submitted, note_sent, limit_msg = False, False, None
+        # Notices already on the page are not the answer to this send.
+        notices_before = set(await _page_notices(page))
         if not note:
             # The dialog's primary (last) button is "Send without a note".
-            submitted = await _send_without_note(page, trace)
+            submitted, blocked = await _send_without_note(page, trace)
+            if blocked is not None:
+                try:
+                    await conn._press_escape()
+                except Exception:
+                    logger.debug("Escape after a blocked invite dialog failed", exc_info=True)
+                who = str(fields.get("name") or "this person").split(" ")[0]
+                asks_email = bool(re.search(r"e-?mail", blocked, re.I))
+                out.update(
+                    status="connect_unavailable",
+                    message=(
+                        f"LinkedIn asks for {who}'s email address before it lets you connect; nothing was sent."
+                        if asks_email
+                        else "LinkedIn's invite dialog would not let us send (Send stayed disabled); nothing was sent."
+                    )
+                    + f" The dialog said: {blocked[:200]}",
+                )
+                out["trace"] = trace
+                logger.warning("msgkit_connect %s: blocked | steps: %s", username, "; ".join(trace))
+                return out
         if not submitted:
             submitted, note_sent, limit_msg = await conn._submit_invite_dialog(note)
         if limit_msg is not None:
@@ -1114,19 +1161,23 @@ def register_msgkit_tools(
         # proof (checked on a live send: the toast appeared, Sent invitations listed the
         # person, and the profile still showed Connect after a reload).
         first_name = str((fields.get("name") or "")).split(" ")[0].lower()
+        def says_sent(text: str) -> bool:
+            return bool(
+                re.search(r"\binvitation sent\b|\bsent\b", text, re.I)
+                or (first_name and first_name in text.lower())
+            )
+
+        # Wait up to ~4 s for a new notice that says the invitation went out; any other new
+        # notice is kept for the message but does not end the wait.
         notices = ""
         for _ in range(8):
-            notices = await _page_notices(session.page) or notices
-            if notices:
-                break
+            fresh = [n for n in await _page_notices(session.page) if n not in notices_before]
+            if fresh:
+                notices = " | ".join(fresh)[:300]
+                if says_sent(notices):
+                    break
             await asyncio.sleep(0.5)
-        toast_says_sent = bool(
-            notices
-            and (
-                re.search(r"\binvitation sent\b|\bsent\b", notices, re.I)
-                or (first_name and first_name in notices.lower())
-            )
-        )
+        toast_says_sent = bool(notices and says_sent(notices))
         if notices:
             out["notice"] = notices
             trace.append(f"toast: {notices[:80]}")
