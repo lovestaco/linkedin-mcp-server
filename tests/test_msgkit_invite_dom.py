@@ -40,7 +40,13 @@ async def page():
 async def test_the_invite_send_button_is_picked_over_an_open_chat(page):
     await page.set_content(f"<main>profile</main>{CHAT}{INVITE}")
     tagged = await page.evaluate(mk._TAG_SEND_JS)
-    assert (tagged["found"], tagged["text"], tagged["buttons"], tagged["disabled"], tagged["inputs"]) == (True, "Send without a note", 2, False, 0)
+    assert (
+        tagged["found"],
+        tagged["text"],
+        tagged["buttons"],
+        tagged["disabled"],
+        tagged["inputs"],
+    ) == (True, "Send without a note", 2, False, 0)
     assert await page.locator(mk._SEND_TARGET).inner_text() == "Send without a note"
 
 
@@ -95,7 +101,9 @@ async def test_a_pending_request_is_never_taken_for_connect(page):
 
 async def test_the_withdraw_dialog_is_never_clicked(page):
     await page.set_content(f"<main>profile</main>{WITHDRAW}")
-    clicks = await page.evaluate("() => { window.clicked = 0; document.querySelectorAll('button').forEach(b => b.addEventListener('click', () => window.clicked++)); return 0; }")
+    clicks = await page.evaluate(
+        "() => { window.clicked = 0; document.querySelectorAll('button').forEach(b => b.addEventListener('click', () => window.clicked++)); return 0; }"
+    )
     trace: list[str] = []
     ok, blocked = await mk._send_without_note(page, trace)
     assert not ok and blocked == mk.PENDING_DIALOG
@@ -107,3 +115,39 @@ def test_a_withdrawal_notice_is_not_a_send():
     assert mk._says_sent("Invitation sent to Mehul.")
     assert not mk._says_sent("Invitation to Mehul withdrawn.")
     assert not mk._says_sent("Muted")
+
+
+def _top(more: str) -> str:
+    return f"""<main><section componentkey="com.linkedin.sdui.profile.card.a"></section>
+<section componentkey="com.linkedin.sdui.profile.card.b"><h2>Kiran Poojary</h2>
+ <div class="row"><button>Follow</button><a href="/messaging/compose/?recipient=x">Message</a>{more}</div>
+</section></main>"""
+
+
+@pytest.mark.parametrize(
+    "more",
+    [
+        '<button aria-label="More">...</button>',
+        "<button><span>More</span></button>",  # labelled by its text only
+        '<div role="button" tabindex="0">More</div>',  # not a <button>
+        '<button aria-label="More actions"><svg></svg></button>',
+    ],
+)
+async def test_the_more_control_is_found_however_it_is_built(page, more):
+    await page.set_content(_top(more))
+    ctl = await page.evaluate(mk._CONNECT_JS, "more")
+    assert ctl.get("found"), more
+    assert await page.locator(mk._MORE_TARGET).count() == 1
+
+
+async def test_a_see_more_link_is_not_the_more_menu(page):
+    await page.set_content(
+        _top('<button aria-label="See more about Kiran">See more</button>')
+    )
+    assert not (await page.evaluate(mk._CONNECT_JS, "more")).get("found")
+
+
+async def test_the_failure_message_describes_the_more_control(page):
+    await page.set_content(_top("<button><span>More</span></button>"))
+    diag = await page.evaluate(mk._CONNECT_DIAG_JS)
+    assert diag["more"] and diag["more"][0].startswith("button|"), diag

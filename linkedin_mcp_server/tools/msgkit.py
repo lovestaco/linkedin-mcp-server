@@ -34,7 +34,10 @@ from linkedin_mcp_server.config.schema import DEFAULT_TOOL_TIMEOUT_SECONDS
 from linkedin_mcp_server.dependencies import get_ready_extractor, tool_errors
 from linkedin_mcp_server.linkedin import connection
 from linkedin_mcp_server.linkedin.identifiers import normalize_person_identifier
-from linkedin_mcp_server.tools.msgkit_connections import CONNECTIONS_URL, list_connections
+from linkedin_mcp_server.tools.msgkit_connections import (
+    CONNECTIONS_URL,
+    list_connections,
+)
 from linkedin_mcp_server.tools.msgkit_profile import build_fields
 
 logger = logging.getLogger(__name__)
@@ -203,11 +206,19 @@ _CONNECT_JS = r"""(mode) => {
     .map(e => e.closest('section')).filter(Boolean);
   const h2 = sections[1] && sections[1].querySelector('h2');
   const name = h2 ? h2.innerText.trim().toLowerCase() : '';
-  // The top card's button row: the smallest ancestor of its Message link that holds the More button.
+  // The top card's More control. Usually <button aria-label="More">, but on some accounts (seen on
+  // 2026-11-21: 15 profiles in a row on one laptop) it is labelled by its text only, or is not a
+  // <button>; any visible button-like control whose own label is "More" / "More actions" counts.
+  const isMore = e => {
+    const a = (e.getAttribute('aria-label') || '').trim();
+    return /^more( actions)?$/i.test(a) || (!a && /^more$/i.test((e.innerText || '').trim()));
+  };
+  const mores = root => [...root.querySelectorAll('button, [role="button"], a')].filter(e => vis(e) && isMore(e));
+  // The top card's button row: the smallest ancestor of its Message link that holds the More control.
   let row = null;
   const compose = [...main.querySelectorAll('a[href*="/messaging/compose/"]')].filter(vis)[0];
   for (let el = compose, i = 0; el && i < 6; el = el.parentElement, i++) {
-    if ([...el.querySelectorAll('button[aria-label="More"]')].some(vis)) { row = el; break; }
+    if (mores(el).length) { row = el; break; }
   }
   const tag = (e, attr) => { e.setAttribute(attr, '1'); return e; };
   // The same ConnectButton control turns into "Pending" once a request is out, and clicking it then
@@ -231,7 +242,7 @@ _CONNECT_JS = r"""(mode) => {
     return { found: false, menu_open: [...document.querySelectorAll('[role="menu"]')].some(vis) };
   }
   if (mode === 'more') {
-    const more = row && [...row.querySelectorAll('button[aria-label="More"]')].filter(vis)[0];
+    const more = row && mores(row)[0];
     if (!more) return { found: false };
     tag(more, 'data-msgkit-more');
     return { found: true };
@@ -374,7 +385,11 @@ _CONNECT_DIAG_JS = r"""() => {
   for (let i = 0; row && i < 4; i++) row = row.parentElement;
   const near = row ? [...row.querySelectorAll('button, a')].filter(vis).map(lab).filter(Boolean) : [];
   const menus = [...document.querySelectorAll('[role="menu"]')].filter(vis).map(m => (m.innerText || '').trim().replace(/\s+/g, ' ').slice(0, 160));
-  return { compose: !!compose, w: window.innerWidth, h: window.innerHeight, near: [...new Set(near)].slice(0, 12), menus };
+  // How each control that reads "More" is built, so a new layout can be matched from the failure message.
+  const more = row ? [...row.querySelectorAll('*')].filter(e => vis(e) && /^more$/i.test(lab(e)) && !e.querySelector('*:not(svg):not(path):not(span):not(use)'))
+    .slice(0, 3).map(e => [e.tagName.toLowerCase(), e.getAttribute('role'), e.getAttribute('aria-label'), e.getAttribute('aria-haspopup') || e.getAttribute('aria-expanded'),
+      (e.getAttribute('componentkey') || '').slice(0, 40)].map(x => x || '').join('|')) : [];
+  return { compose: !!compose, w: window.innerWidth, h: window.innerHeight, near: [...new Set(near)].slice(0, 12), more, menus };
 }"""
 
 
@@ -542,14 +557,22 @@ async def _send_without_note(page: Any, trace: list[str]) -> tuple[bool, str | N
             trace.append(f"tag failed: {exc}")
             return False, None
         if tagged.get("withdraw"):
-            trace.append(f"the dialog offers Withdraw (a request is pending); nothing clicked: {str(tagged.get('says'))[:160]}")
+            trace.append(
+                f"the dialog offers Withdraw (a request is pending); nothing clicked: {str(tagged.get('says'))[:160]}"
+            )
             return False, PENDING_DIALOG
-        if tagged.get("found") and not tagged.get("disabled") and not tagged.get("inputs"):
+        if (
+            tagged.get("found")
+            and not tagged.get("disabled")
+            and not tagged.get("inputs")
+        ):
             break
         await asyncio.sleep(0.5)
     if tagged.get("other"):
         says = str(tagged.get("says") or "")
-        trace.append(f"the dialog's main button is {tagged.get('text')!r}, not Send; nothing clicked: {says[:160]}")
+        trace.append(
+            f"the dialog's main button is {tagged.get('text')!r}, not Send; nothing clicked: {says[:160]}"
+        )
         return False, says or "an unexpected dialog"
     if not tagged.get("found"):
         try:
@@ -561,7 +584,14 @@ async def _send_without_note(page: Any, trace: list[str]) -> tuple[bool, str | N
     trace.append(f"send button {tagged.get('text')!r} of {tagged.get('buttons')}")
     if tagged.get("disabled") or tagged.get("inputs"):
         says = str(tagged.get("says") or "")
-        trace.append(("send button disabled" if tagged.get("disabled") else "dialog asks for more") + f"; it says: {says[:200]}")
+        trace.append(
+            (
+                "send button disabled"
+                if tagged.get("disabled")
+                else "dialog asks for more"
+            )
+            + f"; it says: {says[:200]}"
+        )
         return False, says or "the Send button stayed disabled"
     btn = page.locator(_SEND_TARGET).first
     await _pause(0.5, 1.2)
@@ -1163,11 +1193,20 @@ def register_msgkit_tools(
                 try:
                     await conn._press_escape()
                 except Exception:
-                    logger.debug("Escape after a blocked invite dialog failed", exc_info=True)
+                    logger.debug(
+                        "Escape after a blocked invite dialog failed", exc_info=True
+                    )
                 if blocked == PENDING_DIALOG:
-                    out.update(status="pending", message="A request is already pending (LinkedIn offered to withdraw it; nothing was clicked).")
+                    out.update(
+                        status="pending",
+                        message="A request is already pending (LinkedIn offered to withdraw it; nothing was clicked).",
+                    )
                     out["trace"] = trace
-                    logger.warning("msgkit_connect %s: pending | steps: %s", username, "; ".join(trace))
+                    logger.warning(
+                        "msgkit_connect %s: pending | steps: %s",
+                        username,
+                        "; ".join(trace),
+                    )
                     return out
                 who = str(fields.get("name") or "this person").split(" ")[0]
                 asks_email = bool(re.search(r"e-?mail", blocked, re.I))
@@ -1181,7 +1220,9 @@ def register_msgkit_tools(
                     + f" The dialog said: {blocked[:200]}",
                 )
                 out["trace"] = trace
-                logger.warning("msgkit_connect %s: blocked | steps: %s", username, "; ".join(trace))
+                logger.warning(
+                    "msgkit_connect %s: blocked | steps: %s", username, "; ".join(trace)
+                )
                 return out
         if not submitted:
             submitted, note_sent, limit_msg = await conn._submit_invite_dialog(note)
@@ -1220,7 +1261,9 @@ def register_msgkit_tools(
         # notice is kept for the message but does not end the wait.
         notices = ""
         for _ in range(8):
-            fresh = [n for n in await _page_notices(session.page) if n not in notices_before]
+            fresh = [
+                n for n in await _page_notices(session.page) if n not in notices_before
+            ]
             if fresh:
                 notices = " | ".join(fresh)[:300]
                 if _says_sent(notices):
