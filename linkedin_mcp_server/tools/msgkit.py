@@ -372,13 +372,28 @@ async def _connect_diag(page: Any) -> str:
 async def _open_more_for_connect(page: Any, conn: Any) -> dict[str, Any]:
     """Open the top card's More menu and find Connect in it ({found: False} if none)."""
     if not (await _connect_control(page, "more")).get("found"):
-        return {"found": False}
-    try:
-        await page.locator(_MORE_TARGET).first.click(timeout=4000)
-    except Exception:
-        return {"found": False}
+        return {"found": False, "more": "not found"}
+    more = page.locator(_MORE_TARGET).first
+    # A real click first; when something covers the button (or it is still settling), the
+    # same click forced, then the page's own element.click().
+    clicked, errors = None, []
+    for name, act in (
+        ("click", lambda: more.click(timeout=4000)),
+        ("forced", lambda: more.click(timeout=3000, force=True)),
+        ("js", lambda: more.evaluate("e => e.click()")),
+    ):
+        try:
+            await act()
+            clicked = name
+            break
+        except Exception as exc:
+            errors.append(f"{name}:{type(exc).__name__}")
+    if clicked is None:
+        return {"found": False, "more": "click failed " + ",".join(errors)}
     await asyncio.sleep(1.0)
     ctl = await _connect_control(page, "menu")
+    if clicked != "click":
+        ctl["more"] = clicked
     if not ctl.get("found"):
         try:
             await conn._press_escape()
@@ -402,8 +417,11 @@ _TAG_SEND_JS = r"""() => {
   };
   for (const d of deep(document, 'dialog[open], [role="dialog"], [aria-modal="true"], .artdeco-modal, .send-invite').filter(vis)) {
     if (d.querySelector('textarea')) continue;            // the note editor, not the send step
+    // A chat window LinkedIn keeps open across pages is a dialog too (it has a composer and
+    // dozens of buttons); its last button is "Open send options", never the invite's Send.
+    if (d.querySelector('[contenteditable="true"]') || d.closest('[class*="msg-overlay"]')) continue;
     const btns = [...d.querySelectorAll('button')].filter(vis);
-    if (btns.length < 2) continue;                        // dismiss + primary
+    if (btns.length < 2 || btns.length > 6) continue;     // dismiss + primary (+ add a note)
     const last = btns[btns.length - 1];
     last.setAttribute('data-msgkit-send', '1');
     return { found: true, text: (last.innerText || '').trim(), buttons: btns.length };
@@ -520,6 +538,16 @@ async def _page_notices(page: Any) -> str:
 
 async def _pause(lo: float, hi: float) -> None:
     await asyncio.sleep(random.uniform(lo, hi))
+
+
+async def _scroll_round_trip(page: Any) -> None:
+    """Scroll to the bottom of the page and back to the top (never fails the caller)."""
+    try:
+        await page.evaluate("() => window.scrollTo(0, document.body.scrollHeight)")
+        await _pause(0.8, 1.4)
+        await page.evaluate("() => window.scrollTo(0, 0)")
+    except Exception:
+        logger.debug("Scroll round trip failed", exc_info=True)
 
 
 def register_msgkit_tools(
@@ -967,7 +995,10 @@ def register_msgkit_tools(
             # drawing yet (or the menu opened late). Look again, up to twice, with a pause.
             while not ctl.get("found") and tries < 3:
                 tries += 1
-                await _pause(2.5, 4.0)
+                # Scroll to the bottom and back to the top: LinkedIn draws parts of the top
+                # card (and its menu) lazily, and the scroll makes it finish.
+                await _scroll_round_trip(page)
+                await _pause(1.5, 2.5)
                 ctl = await _connect_control(page, "top")
                 if not ctl.get("found"):
                     ctl = await _open_more_for_connect(page, conn)
