@@ -73,3 +73,37 @@ async def test_a_videos_muted_status_is_not_linkedins_answer(page):
         <div class="artdeco-toast-item" role="alert">Invitation sent to Mehul.</div></main>"""
     )
     assert await mk._page_notices(page) == ["Invitation sent to Mehul."]
+
+
+PENDING_TOP = """<main><section componentkey="com.linkedin.sdui.profile.card.a"></section>
+<section componentkey="com.linkedin.sdui.profile.card.b"><h2>Mehul Doshi</h2>
+ <div class="row">
+  <a href="/messaging/compose/?recipient=x">Message</a>
+  <button componentkey="ConnectButtonstate:invitation:urn:li:member:1_pending" aria-label="Pending, click to withdraw invitation sent to Mehul Doshi">Pending</button>
+  <button aria-label="More">...</button>
+ </div></section></main>"""
+WITHDRAW = """<dialog open><p>Withdraw invitation? If you withdraw now, you won't be able to resend to Mehul for up to 3 weeks.</p>
+  <button aria-label="Dismiss">x</button><button>Cancel</button><button>Withdraw</button></dialog>"""
+
+
+async def test_a_pending_request_is_never_taken_for_connect(page):
+    await page.set_content(PENDING_TOP)
+    ctl = await page.evaluate(mk._CONNECT_JS, "top")
+    assert ctl.get("pending") and not ctl.get("found")
+    assert await page.locator(mk._CONNECT_TARGET).count() == 0
+
+
+async def test_the_withdraw_dialog_is_never_clicked(page):
+    await page.set_content(f"<main>profile</main>{WITHDRAW}")
+    clicks = await page.evaluate("() => { window.clicked = 0; document.querySelectorAll('button').forEach(b => b.addEventListener('click', () => window.clicked++)); return 0; }")
+    trace: list[str] = []
+    ok, blocked = await mk._send_without_note(page, trace)
+    assert not ok and blocked == mk.PENDING_DIALOG
+    assert await page.evaluate("() => window.clicked") == clicks
+    assert await page.locator("dialog[open]").count() == 1
+
+
+def test_a_withdrawal_notice_is_not_a_send():
+    assert mk._says_sent("Invitation sent to Mehul.")
+    assert not mk._says_sent("Invitation to Mehul withdrawn.")
+    assert not mk._says_sent("Muted")

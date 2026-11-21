@@ -210,9 +210,22 @@ _CONNECT_JS = r"""(mode) => {
     if ([...el.querySelectorAll('button[aria-label="More"]')].some(vis)) { row = el; break; }
   }
   const tag = (e, attr) => { e.setAttribute(attr, '1'); return e; };
+  // The same ConnectButton control turns into "Pending" once a request is out, and clicking it then
+  // opens LinkedIn's Withdraw dialog (on 2026-11-21 a retry withdrew a pending invitation that way).
+  // Only a control that says Connect counts; a Pending / Withdraw one means a request is pending.
+  const label = e => ((e.getAttribute('aria-label') || '') + ' ' + (e.innerText || '')).trim();
+  const isPending = e => /\bpending\b|withdraw/i.test(label(e)) || /_pending$|withdraw/i.test(e.getAttribute('componentkey') || '');
+  const isConnect = e => !isPending(e) && (
+    /_connect$/.test(e.getAttribute('componentkey') || '') ||
+    /^invite .+ to connect$/i.test((e.getAttribute('aria-label') || '').trim()) ||
+    /^connect$/i.test((e.innerText || '').trim()) ||
+    /\/preload\/custom-invite\//.test(e.getAttribute('href') || ''));
+  const controls = root => [...root.querySelectorAll('[componentkey^="ConnectButton"], a[href*="/preload/custom-invite/"]')];
   if (mode === 'menu') {
     for (const m of [...document.querySelectorAll('[role="menu"]')].filter(vis)) {
-      const c = m.querySelector('[componentkey^="ConnectButton"], a[href*="/preload/custom-invite/"]');
+      const all = controls(m);
+      if (all.some(isPending) || [...m.querySelectorAll('[role="menuitem"], a, button')].some(isPending)) return { found: false, pending: true, where: 'menu' };
+      const c = all.find(isConnect);
       if (c) { tag(c, 'data-msgkit-connect'); return { found: true, where: 'menu', tag: c.tagName, key: c.getAttribute('componentkey') }; }
     }
     return { found: false, menu_open: [...document.querySelectorAll('[role="menu"]')].some(vis) };
@@ -227,6 +240,9 @@ _CONNECT_JS = r"""(mode) => {
   if (row) pool = pool.filter(e => row.contains(e));
   else if (name) pool = pool.filter(e => (e.getAttribute('aria-label') || '').toLowerCase().includes(name));
   else pool = [];
+  const rowPending = row && [...row.querySelectorAll('button, a')].filter(vis).some(isPending);
+  if (pool.some(isPending) || rowPending) return { found: false, pending: true, where: 'top' };
+  pool = pool.filter(isConnect);
   if (!pool.length) return { found: false, row: !!row };
   const hit = tag(pool[0], 'data-msgkit-connect');
   return { found: true, where: 'top', tag: hit.tagName, label: hit.getAttribute('aria-label'), key: hit.getAttribute('componentkey') };
@@ -422,7 +438,15 @@ _TAG_SEND_JS = r"""() => {
     if (d.querySelector('[contenteditable="true"]') || d.closest('[class*="msg-overlay"]')) continue;
     const btns = [...d.querySelectorAll('button')].filter(vis);
     if (btns.length < 2 || btns.length > 6) continue;     // dismiss + primary (+ add a note)
+    const says = (d.innerText || '').trim().replace(/\s+/g, ' ').slice(0, 300);
+    // A pending request's dialog offers Withdraw: never click anything in it.
+    if (btns.some(b => /withdraw/i.test(b.innerText || b.getAttribute('aria-label') || '')) || /\bwithdraw/i.test(says)) {
+      return { found: false, withdraw: true, says };
+    }
     const last = btns[btns.length - 1];
+    if (!/\bsend\b/i.test((last.innerText || last.getAttribute('aria-label') || '').trim())) {
+      return { found: false, other: true, says, text: (last.innerText || '').trim() };
+    }
     last.setAttribute('data-msgkit-send', '1');
     // Some people can only be invited with their email address: the dialog then holds an input and
     // keeps Send disabled until it is filled.
@@ -430,7 +454,7 @@ _TAG_SEND_JS = r"""() => {
     return {
       found: true, text: (last.innerText || '').trim(), buttons: btns.length, inputs,
       disabled: last.disabled || last.getAttribute('aria-disabled') === 'true',
-      says: (d.innerText || '').trim().replace(/\s+/g, ' ').slice(0, 300),
+      says,
     };
   }
   return { found: false };
@@ -494,6 +518,10 @@ async def _dialog_closed_within(page: Any, seconds: float) -> bool:
     return False
 
 
+# What _send_without_note answers when the dialog is LinkedIn's Withdraw dialog of a pending request.
+PENDING_DIALOG = "\x00pending"
+
+
 async def _send_without_note(page: Any, trace: list[str]) -> tuple[bool, str | None]:
     """Click the invite dialog's primary button ("Send without a note"); (True, None) once the dialog closed.
 
@@ -513,9 +541,16 @@ async def _send_without_note(page: Any, trace: list[str]) -> tuple[bool, str | N
         except Exception as exc:
             trace.append(f"tag failed: {exc}")
             return False, None
+        if tagged.get("withdraw"):
+            trace.append(f"the dialog offers Withdraw (a request is pending); nothing clicked: {str(tagged.get('says'))[:160]}")
+            return False, PENDING_DIALOG
         if tagged.get("found") and not tagged.get("disabled") and not tagged.get("inputs"):
             break
         await asyncio.sleep(0.5)
+    if tagged.get("other"):
+        says = str(tagged.get("says") or "")
+        trace.append(f"the dialog's main button is {tagged.get('text')!r}, not Send; nothing clicked: {says[:160]}")
+        return False, says or "an unexpected dialog"
     if not tagged.get("found"):
         try:
             seen = await page.evaluate(_DIALOG_DIAG_JS)
@@ -553,6 +588,14 @@ async def _send_without_note(page: Any, trace: list[str]) -> tuple[bool, str | N
     except Exception:
         pass
     return False, None
+
+
+def _says_sent(text: str) -> bool:
+    """A notice that says the invitation went out. "Invitation to Mehul withdrawn." names the person
+    too, and was once taken for a send: only a notice that says sent counts, never a withdrawal."""
+    if re.search(r"withdr", text, re.I):
+        return False
+    return bool(re.search(r"\binvitation sent\b|\bsent\b", text, re.I))
 
 
 async def _page_notices(page: Any) -> list[str]:
@@ -1006,6 +1049,8 @@ def register_msgkit_tools(
         # Connect is either a visible button in the top card's row or, on
         # profiles led by Follow / Message, an item in the three-dots menu.
         ctl = await _connect_control(page, "top")
+        if ctl.get("pending") and not blocked:
+            state = "pending"  # the top card shows Pending: never click it (that is Withdraw)
         via_menu = False
         tries = 1
         if (
@@ -1016,21 +1061,26 @@ def register_msgkit_tools(
         ):
             ctl = await _open_more_for_connect(page, conn)  # left open when found
             via_menu = bool(ctl.get("found"))
+            if ctl.get("pending"):
+                state = "pending"
             # About a third of the profiles led by Follow / Message failed here although
             # Connect sat in their More menu: the top card's button row had not finished
             # drawing yet (or the menu opened late). Look again, up to twice, with a pause.
-            while not ctl.get("found") and tries < 3:
+            while not ctl.get("found") and not ctl.get("pending") and tries < 3:
                 tries += 1
                 # Scroll to the bottom and back to the top: LinkedIn draws parts of the top
                 # card (and its menu) lazily, and the scroll makes it finish.
                 await _scroll_round_trip(page)
                 await _pause(1.5, 2.5)
                 ctl = await _connect_control(page, "top")
-                if not ctl.get("found"):
+                if not ctl.get("found") and not ctl.get("pending"):
                     ctl = await _open_more_for_connect(page, conn)
                     via_menu = bool(ctl.get("found"))
                 else:
                     via_menu = False
+                if ctl.get("pending"):
+                    state = "pending"
+                    break
                 if ctl.get("found"):
                     signals = await conn._read_action_signals(username)
                     state = connection.detect_connection_state(signals)
@@ -1114,6 +1164,11 @@ def register_msgkit_tools(
                     await conn._press_escape()
                 except Exception:
                     logger.debug("Escape after a blocked invite dialog failed", exc_info=True)
+                if blocked == PENDING_DIALOG:
+                    out.update(status="pending", message="A request is already pending (LinkedIn offered to withdraw it; nothing was clicked).")
+                    out["trace"] = trace
+                    logger.warning("msgkit_connect %s: pending | steps: %s", username, "; ".join(trace))
+                    return out
                 who = str(fields.get("name") or "this person").split(" ")[0]
                 asks_email = bool(re.search(r"e-?mail", blocked, re.I))
                 out.update(
@@ -1160,12 +1215,6 @@ def register_msgkit_tools(
         # two, and keeps drawing Connect on the profile for a while after: the toast is the
         # proof (checked on a live send: the toast appeared, Sent invitations listed the
         # person, and the profile still showed Connect after a reload).
-        first_name = str((fields.get("name") or "")).split(" ")[0].lower()
-        def says_sent(text: str) -> bool:
-            return bool(
-                re.search(r"\binvitation sent\b|\bsent\b", text, re.I)
-                or (first_name and first_name in text.lower())
-            )
 
         # Wait up to ~4 s for a new notice that says the invitation went out; any other new
         # notice is kept for the message but does not end the wait.
@@ -1174,10 +1223,10 @@ def register_msgkit_tools(
             fresh = [n for n in await _page_notices(session.page) if n not in notices_before]
             if fresh:
                 notices = " | ".join(fresh)[:300]
-                if says_sent(notices):
+                if _says_sent(notices):
                     break
             await asyncio.sleep(0.5)
-        toast_says_sent = bool(notices and says_sent(notices))
+        toast_says_sent = bool(notices and _says_sent(notices))
         if notices:
             out["notice"] = notices
             trace.append(f"toast: {notices[:80]}")
