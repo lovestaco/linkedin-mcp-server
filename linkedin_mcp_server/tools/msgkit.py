@@ -56,12 +56,42 @@ _CARDS_JS = r"""(limit) => {
     const actors = [...c.querySelectorAll('a[href*="/in/"], a[href*="/company/"]')]
       .map(a => (a.getAttribute('href') || '').split('?')[0])
       .filter((h, j, all) => h && all.indexOf(h) === j).slice(0, 4);
+    // The card's embed (an article, a blog, any outside link): links outside the
+    // post's own text that are not a person, company, post, hashtag or search.
+    const links = [];
+    for (const a of c.querySelectorAll('a[href]')) {
+      if (box && box.contains(a)) continue;
+      let u;
+      try { u = new URL(a.href, location.href); } catch (e) { continue; }
+      const li = /(^|\.)linkedin\.com$/.test(u.hostname);
+      if (li && !/^\/(pulse|newsletters|events)\//.test(u.pathname)) continue;
+      if (!/^https?:$/.test(u.protocol)) continue;
+      const href = li ? u.origin + u.pathname : u.href;
+      const title = (a.innerText || '').split('\n').map(t => t.trim()).filter(Boolean)[0] || '';
+      const seen = links.find(l => l.url === href);
+      if (seen) { if (!seen.title && title) seen.title = title; continue; }
+      if (links.length < 3) links.push({ url: href, title });
+    }
+    // The post's own pictures (a photo, a document's pages): LinkedIn CDN links, as
+    // shown (signed; they expire after a few weeks). Not avatars or logos.
+    const images = [];
+    for (const im of c.querySelectorAll('img')) {
+      const src = im.currentSrc || im.src || '';
+      if (!/^https:\/\/media\.licdn\.com\/dms\/image\//.test(src)) continue;
+      if (/profile-displayphoto|company-logo|_logo|-logo/i.test(src)) continue;
+      if (/^View (.+ profile|company)/i.test(im.alt || '')) continue;
+      const w = Math.max(im.naturalWidth || 0, Math.round(im.getBoundingClientRect().width));
+      if (w && w < 150) continue;
+      if (!images.includes(src) && images.length < 4) images.push(src);
+    }
     return {
       index: i,
       lines: lines.slice(0, 60),
       text: box ? (box.innerText || box.textContent || '').replace(/\s*…\s*more\s*$/, '').trim() : '',
       original_post_url: orig ? (orig.getAttribute('href') || '').split('?')[0] : null,
       actor_links: actors,
+      links,
+      images,
     };
   });
 }"""
@@ -678,7 +708,9 @@ def register_msgkit_tools(
         (one page load; the main profile page is not opened).
 
         Returns {url, posts: [{index, lines, text, original_post_url,
-        actor_links, share_url}], cards_seen, copy_errors, followers_text, message_url}.
+        actor_links, links, share_url}], cards_seen, copy_errors, followers_text, message_url};
+        links is the card's embed ([{url, title}]: an article, a blog, an outside link);
+        images are the post's own pictures (LinkedIn CDN links, signed: they expire).
         share_url is the link LinkedIn's "Copy link to post" gives (an lnkd.in
         short link); followers_text is the person's "N followers" line or null;
         message_url is the Message button's link (a conversation or the compose link) or null.
