@@ -139,6 +139,11 @@ _PEOPLE_JS = r"""() => {
     company_id: id,
     slug,
     ready: /associated members?/i.test(text) && /What they do/i.test(text),
+    // What the page showed instead, for the failure note: its title, where it
+    // ended up (a redirect), and the body when there is no <main>.
+    title: document.title,
+    at: location.href,
+    body: m ? '' : (document.body ? document.body.innerText : '').slice(0, 1500),
   };
 }"""
 
@@ -774,7 +779,7 @@ def register_msgkit_tools(
         return info
 
     @mcp.tool(
-        timeout=tool_timeout,
+        timeout=max(tool_timeout, 120),
         title="msgkit: Company People (one function)",
         annotations={"readOnlyHint": True, "openWorldHint": True},
         tags={"company", "msgkit"},
@@ -792,8 +797,9 @@ def register_msgkit_tools(
         do" are that function's headcount, the same for every viewer (the
         "People highlights" line is personalised and is not used).
 
-        Returns {url, text, company_id, slug, ready}; ready=false means the
-        insights never appeared (retry later rather than trusting the text).
+        Returns {url, text, company_id, slug, ready, title, at, body};
+        ready=false means the insights never appeared (retry later rather than
+        trusting the text); title/at/body say what the page showed instead.
         """
         slug = company_slug.strip().strip("/").split("/")[-1].lower()
         extractor = await get_ready_extractor(ctx, tool_name="msgkit_company_people")
@@ -801,7 +807,8 @@ def register_msgkit_tools(
         session = await _open(extractor, url)
         page = session.page
         info: dict[str, Any] = {}
-        deadline = asyncio.get_running_loop().time() + 20
+        # 45s: on a slow laptop the insights take over 20s to appear.
+        deadline = asyncio.get_running_loop().time() + 45
         while True:
             await _pause(1.2, 2.0)
             info = await page.evaluate(_PEOPLE_JS)
