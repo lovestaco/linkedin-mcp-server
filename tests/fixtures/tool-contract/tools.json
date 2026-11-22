@@ -750,7 +750,7 @@
       "openWorldHint": true,
       "readOnlyHint": true
     },
-    "description": "Open /company/<slug>/people/?facetCurrentFunction=<id> (one page load;\n8 = Engineering) and wait until the insights have rendered. With the\nfilter, \"N associated members\" and the pinned first row of \"What they\ndo\" are that function's headcount, the same for every viewer (the\n\"People highlights\" line is personalised and is not used).\n\nReturns {url, text, company_id, slug, ready}; ready=false means the\ninsights never appeared (retry later rather than trusting the text).",
+    "description": "Open /company/<slug>/people/?facetCurrentFunction=<id> (one page load;\n8 = Engineering) and wait until the insights have rendered. With the\nfilter, \"N associated members\" and the pinned first row of \"What they\ndo\" are that function's headcount, the same for every viewer (the\n\"People highlights\" line is personalised and is not used).\n\nReturns {url, text, company_id, slug, ready, title, at, body};\nready=false means the insights never appeared (retry later rather than\ntrusting the text); title/at/body say what the page showed instead.",
     "inputSchema": {
       "additionalProperties": false,
       "properties": {
@@ -960,7 +960,7 @@
       "openWorldHint": true,
       "readOnlyHint": true
     },
-    "description": "Read a person's newest activity from /in/<user>/recent-activity/all/\n(one page load; the main profile page is not opened).\n\nReturns {url, posts: [{index, lines, text, original_post_url,\nactor_links, share_url}], cards_seen, copy_errors, followers_text, message_url}.\nshare_url is the link LinkedIn's \"Copy link to post\" gives (an lnkd.in\nshort link); followers_text is the person's \"N followers\" line or null;\nmessage_url is the Message button's link (a conversation or the compose link) or null.",
+    "description": "Read a person's newest activity from /in/<user>/recent-activity/all/\n(one page load; the main profile page is not opened).\n\nReturns {url, posts: [{index, lines, text, original_post_url,\nactor_links, links, share_url}], cards_seen, copy_errors, followers_text, message_url};\nlinks is the card's embed ([{url, title}]: an article, a blog, an outside link);\nimages are the post's own pictures (LinkedIn CDN links, signed: they expire).\nshare_url is the link LinkedIn's \"Copy link to post\" gives (an lnkd.in\nshort link); followers_text is the person's \"N followers\" line or null;\nmessage_url is the Message button's link (a conversation or the compose link) or null.",
     "inputSchema": {
       "additionalProperties": false,
       "properties": {
