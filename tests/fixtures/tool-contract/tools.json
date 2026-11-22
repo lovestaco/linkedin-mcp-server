@@ -1160,7 +1160,7 @@
       "openWorldHint": true,
       "readOnlyHint": true
     },
-    "description": "Search for jobs on LinkedIn.\n\nReturns job_ids that can be passed to get_job_details for full info.\n\nLinkedIn is moving accounts to a redesigned job search, which keeps\nonly the keywords, date_posted and paging. It drops the filters\nmarked \"Classic search only\" and reports them in section_errors as\nfilters_dropped. When it drops the location or work type, search again\nwith them in the keywords (\"remote python developer in Lyon\") and keep\ndoing so; words such as \"senior\" or \"internship\" there narrow the\nresults too. Quotes do not make a phrase exact on that search.",
+    "description": "Search for jobs on LinkedIn.\n\nReturns job_ids that can be passed to get_job_details for full info.\n\nLinkedIn is moving accounts to a redesigned job search, which keeps\nonly the keywords, date_posted, easy_apply and paging. It drops the\nfilters marked \"Classic search only\" and reports them in section_errors\nas filters_dropped. When it drops the location or work type, search\nagain with them in the keywords (\"remote python developer in Lyon\") and\nkeep doing so; words such as \"senior\" or \"internship\" there narrow the\nresults too. Quotes do not make a phrase exact on that search.",
     "inputSchema": {
       "additionalProperties": false,
       "properties": {
@@ -1178,7 +1178,7 @@
         },
         "easy_apply": {
           "default": false,
-          "description": "Only show Easy Apply jobs (default false). Classic search only.",
+          "description": "Only show Easy Apply jobs (default false).",
           "type": "boolean"
         },
         "experience_level": {
@@ -1239,6 +1239,12 @@
           ],
           "default": null,
           "description": "Sort results (date, relevance). Classic search only."
+        },
+        "start": {
+          "default": 0,
+          "description": "Result offset to begin at (default 0). Pass a previous\ncall's pagination.next_offset, with the same search\narguments, to continue where it stopped. Results can shift\nbetween calls, so a continuation may repeat a job id.",
+          "minimum": 0,
+          "type": "integer"
         },
         "work_type": {
           "anyOf": [
