@@ -911,6 +911,50 @@
     "_meta": {
       "fastmcp": {
         "tags": [
+          "msgkit",
+          "person"
+        ]
+      }
+    },
+    "annotations": {
+      "destructiveHint": true,
+      "openWorldHint": true
+    },
+    "description": "Like the person's newest own post (never a repost) if it is recent, to warm\nthem up before a connection request.\n\nOne page load: /in/<user>/recent-activity/all/. Looks at the first few\ncards, skips reposts (cards led by \"<name> reposted this\", or with a second\nauthor's header) and posts older than ``max_age_days``, then presses Like\non the first one left and checks the button changed.\n\nReturns {url, status, message, post_url, age, liked}. Statuses: liked,\nalready_liked (nothing pressed), no_recent_post, would_like (dry_run),\nfailed (the button did not change: do not assume it was liked).",
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "dry_run": {
+          "default": false,
+          "description": "Find the post and report it; like nothing.",
+          "type": "boolean"
+        },
+        "linkedin_username": {
+          "type": "string"
+        },
+        "max_age_days": {
+          "default": 14,
+          "maximum": 90,
+          "minimum": 1,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "linkedin_username"
+      ],
+      "type": "object"
+    },
+    "name": "msgkit_like_recent_post",
+    "outputSchema": {
+      "additionalProperties": true,
+      "type": "object"
+    },
+    "title": "msgkit: Like Recent Post"
+  },
+  {
+    "_meta": {
+      "fastmcp": {
+        "tags": [
           "msgkit"
         ]
       }
