@@ -44,6 +44,33 @@ logger = logging.getLogger(__name__)
 
 _CARD = 'main [componentkey^="update-card-focus"]'
 
+# Per card, for the like-first step: visible lines, how many author headers it holds
+# (a second one marks a repost with thoughts), the post's permalink and the Like
+# button's label ("Reaction button state: no reaction" until pressed).
+_LIKE_CARDS_JS = r"""(limit) => {
+  const cards = [...document.querySelectorAll('main [componentkey^="update-card-focus"]')].slice(0, limit);
+  return cards.map((c, i) => {
+    const lines = (c.innerText || '').split('\n').map(s => s.trim()).filter(s => s && s !== '\u200b');
+    const a = c.querySelector('a[href*="/feed/update/urn:li:"]');
+    const b = c.querySelector('button[aria-label^="Reaction button state:"]');
+    const headers = lines.filter(l => /^\d+\s?(s|m|h|d|w|mo|yr|y)$/.test(l) || /^\d+\s?(s|m|h|d|w|mo|yr|y)\s/.test(l)).length;
+    return {
+      index: i, lines: lines.slice(0, 14), headers,
+      post_url: a ? (a.getAttribute('href') || '').split('?')[0] : null,
+      like_label: b ? b.getAttribute('aria-label') : null,
+    };
+  });
+}"""
+
+
+def _age_days(label: str) -> float | None:
+    m = re.match(r"^(\d+)\s?(s|m|h|d|w|mo|yr|y)\b", label.strip())
+    if not m:
+        return None
+    n = int(m.group(1))
+    return n * {"s": 1 / 86400, "m": 1 / 1440, "h": 1 / 24, "d": 1, "w": 7, "mo": 30, "yr": 365, "y": 365}[m.group(2)]
+
+
 # Per card: visible lines (for author/age/counts), the post text, and the link
 # to an embedded original post (present on reposts).
 _CARDS_JS = r"""(limit) => {
@@ -1046,6 +1073,114 @@ def register_msgkit_tools(
             "composer": bool(info.get("composer")),
             "path": info.get("path"),
         }
+        return out
+
+    @mcp.tool(
+        timeout=tool_timeout,
+        title="msgkit: Like Recent Post",
+        annotations={"destructiveHint": True, "openWorldHint": True},
+        tags={"person", "msgkit"},
+    )
+    @tool_errors
+    async def msgkit_like_recent_post(
+        linkedin_username: str,
+        ctx: Context,
+        max_age_days: Annotated[int, Field(ge=1, le=90)] = 14,
+        dry_run: Annotated[
+            bool, Field(description="Find the post and report it; like nothing.")
+        ] = False,
+    ) -> dict[str, Any]:
+        """
+        Like the person's newest own post (never a repost) if it is recent, to warm
+        them up before a connection request.
+
+        One page load: /in/<user>/recent-activity/all/. Looks at the first few
+        cards, skips reposts (cards led by "<name> reposted this", or with a second
+        author's header) and posts older than ``max_age_days``, then presses Like
+        on the first one left and checks the button changed.
+
+        Returns {url, status, message, post_url, age, liked}. Statuses: liked,
+        already_liked (nothing pressed), no_recent_post, would_like (dry_run),
+        failed (the button did not change: do not assume it was liked).
+        """
+        username = normalize_person_identifier(linkedin_username)
+        extractor = await get_ready_extractor(ctx, tool_name="msgkit_like_recent_post")
+        url = f"https://www.linkedin.com/in/{username}/recent-activity/all/"
+        out: dict[str, Any] = {
+            "url": url, "status": "no_recent_post", "message": "",
+            "post_url": None, "share_url": None, "age": None, "liked": False,
+        }
+        session = await _open(extractor, url)
+        page = session.page
+        try:
+            await page.wait_for_selector(_CARD, timeout=12000)
+        except Exception:
+            out["message"] = "No activity cards on the page."
+            return out
+        await _pause(1.0, 2.0)
+        cards = await page.evaluate(_LIKE_CARDS_JS, 6)
+        pick = None
+        for c in cards:
+            lines = c.get("lines") or []
+            head = lines[:8]
+            if any(
+                re.search(r"(reposted|reposted this|likes this|loves this|celebrates this|supports this|commented on this|replied to a comment|finds this)", l, re.I)
+                for l in head
+            ):
+                continue  # someone else's post they reposted or reacted to
+            if c.get("headers", 0) > 1:
+                continue  # an embedded original: a repost with thoughts
+            age = next((l for l in head if re.match(r"^\d+\s?(s|m|h|d|w|mo|yr|y)\b", l)), None)
+            if age is None:
+                continue
+            days = _age_days(age)
+            if days is None or days > max_age_days:
+                continue
+            if not c.get("like_label"):
+                continue
+            pick = {**c, "age": age.split()[0]}
+            break
+        if pick is None:
+            out["message"] = f"No own post from the last {max_age_days} days in the first {len(cards)} cards."
+            return out
+        out["post_url"], out["age"] = pick["post_url"], pick["age"]
+        if not pick["like_label"].endswith("no reaction"):
+            out.update(status="already_liked", message="Already reacted to this post.")
+            return out
+        if dry_run:
+            out.update(status="would_like", message="Would like it.")
+            return out
+        card = page.locator(_CARD).nth(pick["index"])
+        btn = card.locator('button[aria-label^="Reaction button state:"]').first
+        try:
+            await btn.scroll_into_view_if_needed(timeout=5000)
+            await _pause(1.2, 2.5)
+            await btn.click(timeout=5000)
+            await _pause(1.2, 2.0)
+            label = await btn.get_attribute("aria-label") or ""
+        except Exception as e:
+            out.update(status="failed", message=f"Like click failed: {type(e).__name__}: {str(e)[:150]}")
+            return out
+        if label and not label.endswith("no reaction"):
+            out.update(status="liked", liked=True, message="Liked.")
+            if not out["post_url"]:
+                # Some cards carry no permalink: take the "Copy link to post" link (an lnkd.in
+                # short link the server resolves), so the like can be logged against the post.
+                try:
+                    await page.evaluate(_INSTALL_COPY_HOOK_JS, isolated_context=False)
+                    await card.locator('button[aria-label^="Open control menu"]').first.click(timeout=5000)
+                    await page.get_by_role("menuitem", name="Copy link to post").first.click(timeout=5000)
+                    await _pause(0.5, 1.0)
+                    copied = await page.evaluate(_TAKE_COPIED_JS, isolated_context=False)
+                    out["share_url"] = copied[-1] if copied else None
+                except Exception as e:
+                    out["message"] = f"Liked; could not copy the post link: {type(e).__name__}"
+                    try:
+                        await page.keyboard.press("Escape")
+                    except Exception:
+                        pass
+        else:
+            out.update(status="failed", message="The Like button did not change after the click.")
         return out
 
     @mcp.tool(
