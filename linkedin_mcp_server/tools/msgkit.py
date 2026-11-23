@@ -63,6 +63,32 @@ _LIKE_CARDS_JS = r"""(limit) => {
 }"""
 
 
+_NOT_THEIRS_RE = re.compile(
+    r"(reposted|likes this|loves this|celebrates this|supports this|commented on this|replied to a comment|finds this)",
+    re.I,
+)
+
+
+def _pick_like_card(cards: list[dict[str, Any]], max_age_days: int = 0) -> dict[str, Any] | None:
+    """The first card that is the person's own post (not a repost, not a reaction of theirs) and has a Like
+    button; when max_age_days > 0 it must also be at most that old. Returns the card plus its age label."""
+    for c in cards:
+        head = (c.get("lines") or [])[:8]
+        if any(_NOT_THEIRS_RE.search(l) for l in head):
+            continue  # someone else's post they reposted or reacted to
+        if c.get("headers", 0) > 1:
+            continue  # an embedded original: a repost with thoughts
+        if not c.get("like_label"):
+            continue
+        age = next((l for l in head if re.match(r"^\d+\s?(s|m|h|d|w|mo|yr|y)\b", l)), None)
+        if max_age_days > 0:
+            days = _age_days(age) if age else None
+            if days is None or days > max_age_days:
+                continue
+        return {**c, "age": age.split()[0] if age else "?"}
+    return None
+
+
 def _age_days(label: str) -> float | None:
     m = re.match(r"^(\d+)\s?(s|m|h|d|w|mo|yr|y)\b", label.strip())
     if not m:
@@ -1085,19 +1111,21 @@ def register_msgkit_tools(
     async def msgkit_like_recent_post(
         linkedin_username: str,
         ctx: Context,
-        max_age_days: Annotated[int, Field(ge=1, le=90)] = 14,
+        max_age_days: Annotated[
+            int, Field(ge=0, le=3650, description="0: any age (the first own post).")
+        ] = 0,
         dry_run: Annotated[
             bool, Field(description="Find the post and report it; like nothing.")
         ] = False,
     ) -> dict[str, Any]:
         """
-        Like the person's newest own post (never a repost) if it is recent, to warm
-        them up before a connection request.
+        Like the first own post on the person's activity page (never a repost), to warm
+        them up before a connection request. Any age, unless ``max_age_days`` is set.
 
         One page load: /in/<user>/recent-activity/all/. Looks at the first few
         cards, skips reposts (cards led by "<name> reposted this", or with a second
-        author's header) and posts older than ``max_age_days``, then presses Like
-        on the first one left and checks the button changed.
+        author's header), then presses Like on the first one left and checks the
+        button changed.
 
         Returns {url, status, message, post_url, age, liked}. Statuses: liked,
         already_liked (nothing pressed), no_recent_post, would_like (dry_run),
@@ -1119,29 +1147,9 @@ def register_msgkit_tools(
             return out
         await _pause(1.0, 2.0)
         cards = await page.evaluate(_LIKE_CARDS_JS, 6)
-        pick = None
-        for c in cards:
-            lines = c.get("lines") or []
-            head = lines[:8]
-            if any(
-                re.search(r"(reposted|reposted this|likes this|loves this|celebrates this|supports this|commented on this|replied to a comment|finds this)", l, re.I)
-                for l in head
-            ):
-                continue  # someone else's post they reposted or reacted to
-            if c.get("headers", 0) > 1:
-                continue  # an embedded original: a repost with thoughts
-            age = next((l for l in head if re.match(r"^\d+\s?(s|m|h|d|w|mo|yr|y)\b", l)), None)
-            if age is None:
-                continue
-            days = _age_days(age)
-            if days is None or days > max_age_days:
-                continue
-            if not c.get("like_label"):
-                continue
-            pick = {**c, "age": age.split()[0]}
-            break
+        pick = _pick_like_card(cards, max_age_days)
         if pick is None:
-            out["message"] = f"No own post from the last {max_age_days} days in the first {len(cards)} cards."
+            out["message"] = f"No own (non-repost) post in the first {len(cards)} cards."
             return out
         out["post_url"], out["age"] = pick["post_url"], pick["age"]
         if not pick["like_label"].endswith("no reaction"):
