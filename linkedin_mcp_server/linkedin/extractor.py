@@ -275,6 +275,7 @@ class LinkedInExtractor:
         *,
         confirm_send: bool,
         profile_urn: str | None = None,
+        compose_url: str | None = None,
     ) -> dict[str, Any]:
         """Compose and send a new message with explicit confirmation gating."""
         return await self._message_sender.send_message(
@@ -282,6 +283,7 @@ class LinkedInExtractor:
             message,
             confirm_send=confirm_send,
             profile_urn=profile_urn,
+            compose_url=compose_url,
         )
 
     async def reply_to_conversation(

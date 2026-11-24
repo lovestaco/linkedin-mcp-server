@@ -1549,6 +1549,32 @@ def _message_page_url_is_safe(value: str, profile_urn: str) -> bool:
     return all(_normalize_profile_urn(item) == profile_urn for item in recipient_values)
 
 
+def _stored_compose_target(
+    compose_url: str | None, profile_urn: str | None, username: str
+) -> "_ProfileMessageTarget | None":
+    """A compose link kept from an earlier visit, accepted only for the URN the caller already verified.
+
+    The link must be LinkedIn's own /messaging/compose/ route and every recipient value in it must equal
+    the supplied profile URN. Anything else returns None and the caller falls back to the profile page.
+    """
+    if not compose_url or not profile_urn:
+        return None
+    urn = _normalize_profile_urn(profile_urn)
+    parsed = _safe_linkedin_url(compose_url)
+    if urn is None or parsed is None or parsed.path != "/messaging/compose/":
+        return None
+    params = parse_qs(parsed.query, keep_blank_values=True)
+    values = [v for k in ("recipient", "profileUrn") for v in params.get(k, [])]
+    if not values or not all(_normalize_profile_urn(v) == urn for v in values):
+        return None
+    return _ProfileMessageTarget(
+        profile_path=f"/in/{username}/",
+        profile_urn=urn,
+        compose_url=parsed.geturl(),
+        display_name=None,
+    )
+
+
 def _thread_target(thread_id: str) -> _ThreadMessageTarget:
     """Normalize a caller's thread id into the one route a reply may use."""
     key = reply_thread_id(thread_id)
@@ -1984,6 +2010,7 @@ class MessageSender:
         *,
         confirm_send: bool,
         profile_urn: str | None = None,
+        compose_url: str | None = None,
     ) -> dict[str, Any]:
         """Compose and send a new message with explicit confirmation gating.
 
@@ -2016,26 +2043,29 @@ class MessageSender:
         # of the tool's time rather than of whatever navigation left over.
         budget_deadline = _send_budget_deadline()
 
-        await self._navigator._navigate_to_page(profile_url)
-        await self._session.check_rate_limit()
+        # A stored compose link for the URN the caller already verified skips the profile page.
+        target = _stored_compose_target(compose_url, profile_urn, linkedin_username)
+        if target is None:
+            await self._navigator._navigate_to_page(profile_url)
+            await self._session.check_rate_limit()
 
-        try:
-            await self._page.wait_for_selector("main")
-        except PlaywrightTimeoutError:
-            logger.debug("Profile page did not load for %s", linkedin_username)
+            try:
+                await self._page.wait_for_selector("main")
+            except PlaywrightTimeoutError:
+                logger.debug("Profile page did not load for %s", linkedin_username)
 
-        resolution = await self._read_profile_message_target(
-            timeout_ms=_SEND_PROFILE_MESSAGE_TARGET_TIMEOUT_MS
-        )
-        if resolution.status == "unavailable":
-            return contracts.message_action_result(
-                profile_url,
-                "message_unavailable",
-                "LinkedIn did not expose a normal Message action for this profile. "
-                "Use connect_with_person first, then retry only after the connection "
-                "request is accepted.",
+            resolution = await self._read_profile_message_target(
+                timeout_ms=_SEND_PROFILE_MESSAGE_TARGET_TIMEOUT_MS
             )
-        target = resolution.target
+            if resolution.status == "unavailable":
+                return contracts.message_action_result(
+                    profile_url,
+                    "message_unavailable",
+                    "LinkedIn did not expose a normal Message action for this profile. "
+                    "Use connect_with_person first, then retry only after the connection "
+                    "request is accepted.",
+                )
+            target = resolution.target
         if target is None:
             return contracts.message_action_result(
                 profile_url,

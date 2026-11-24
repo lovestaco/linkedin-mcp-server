@@ -278,6 +278,7 @@ def register_messaging_tools(
         confirm_send: bool,
         ctx: Context,
         profile_urn: str | None = None,
+        compose_url: str | None = None,
     ) -> dict[str, Any]:
         """
         Compose and send a new message to a LinkedIn user.
@@ -322,6 +323,10 @@ def register_messaging_tools(
                 action. It never bypasses recipient verification. Obtain via
                 get_person_profile. Note: inbox may not always show all messages;
                 use search_conversations as a fallback.
+            compose_url: Optional LinkedIn /messaging/compose/ link saved earlier for this
+                person. Used only together with profile_urn and only when every recipient
+                value in it equals that URN; then the profile page is skipped. Otherwise it
+                is ignored and the profile page is used.
 
         Returns:
             Dict with url, status, message, recipient_selected, sent, and
@@ -363,6 +368,7 @@ def register_messaging_tools(
             message,
             confirm_send=confirm_send,
             profile_urn=profile_urn,
+            compose_url=compose_url,
         )
 
         try:

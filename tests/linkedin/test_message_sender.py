@@ -2361,3 +2361,31 @@ class TestReplyToConversation:
         assert result["status"] == "recipient_resolution_failed"
         assert result["retry_safe"] is True
         submit.assert_not_awaited()
+
+
+class TestStoredComposeTarget:
+    URN = "ACoAADliqOYB88ZBwK6SFuJFWEvh_Oww4MZ7HU8"
+    LINK = (
+        "https://www.linkedin.com/messaging/compose/?profileUrn=urn%3Ali%3Afsd_profile%3A"
+        + URN
+        + "&recipient="
+        + URN
+        + "&interop=msgOverlay"
+    )
+
+    def test_accepts_a_link_for_the_same_urn(self):
+        from linkedin_mcp_server.linkedin.message_sender import _stored_compose_target
+
+        t = _stored_compose_target(self.LINK, self.URN, "someone")
+        assert t is not None and t.profile_urn == self.URN
+
+    def test_rejects_other_urn_or_route(self):
+        from linkedin_mcp_server.linkedin.message_sender import _stored_compose_target
+
+        assert _stored_compose_target(self.LINK, "ACoAAOTHER", "someone") is None
+        assert _stored_compose_target(self.LINK, None, "someone") is None
+        assert _stored_compose_target(None, self.URN, "someone") is None
+        bad = self.LINK.replace("/messaging/compose/", "/messaging/thread/x/")
+        assert _stored_compose_target(bad, self.URN, "someone") is None
+        evil = self.LINK.replace("www.linkedin.com", "evil.example")
+        assert _stored_compose_target(evil, self.URN, "someone") is None
