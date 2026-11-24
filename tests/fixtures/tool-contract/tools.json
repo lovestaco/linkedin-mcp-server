@@ -920,7 +920,7 @@
       "destructiveHint": true,
       "openWorldHint": true
     },
-    "description": "Like the person's newest own post (never a repost) if it is recent, to warm\nthem up before a connection request.\n\nOne page load: /in/<user>/recent-activity/all/. Looks at the first few\ncards, skips reposts (cards led by \"<name> reposted this\", or with a second\nauthor's header) and posts older than ``max_age_days``, then presses Like\non the first one left and checks the button changed.\n\nReturns {url, status, message, post_url, age, liked}. Statuses: liked,\nalready_liked (nothing pressed), no_recent_post, would_like (dry_run),\nfailed (the button did not change: do not assume it was liked).",
+    "description": "Like the first own post on the person's activity page (never a repost), to warm\nthem up before a connection request. Any age, unless ``max_age_days`` is set.\n\nOne page load: /in/<user>/recent-activity/all/. Looks at the first few\ncards, skips reposts (cards led by \"<name> reposted this\", or with a second\nauthor's header), then presses Like on the first one left and checks the\nbutton changed.\n\nReturns {url, status, message, post_url, age, liked}. Statuses: liked,\nalready_liked (nothing pressed), no_recent_post, would_like (dry_run),\nfailed (the button did not change: do not assume it was liked).",
     "inputSchema": {
       "additionalProperties": false,
       "properties": {
@@ -933,9 +933,10 @@
           "type": "string"
         },
         "max_age_days": {
-          "default": 14,
-          "maximum": 90,
-          "minimum": 1,
+          "default": 0,
+          "description": "0: any age (the first own post).",
+          "maximum": 3650,
+          "minimum": 0,
           "type": "integer"
         }
       },
