@@ -1608,6 +1608,8 @@ class MessageSender:
         self._session = session
         self._navigator = navigator
         self._page = session.page
+        # How the last send_message reached the composer: "link" (a saved compose link) or "profile" (profile page).
+        self.last_send_route: str | None = None
 
     async def _read_profile_message_target(
         self, *, timeout_ms: int = _PROFILE_MESSAGE_TARGET_TIMEOUT_MS
@@ -2045,6 +2047,7 @@ class MessageSender:
 
         # A stored compose link for the URN the caller already verified skips the profile page.
         target = _stored_compose_target(compose_url, profile_urn, linkedin_username)
+        self.last_send_route = "link" if target is not None else "profile"
         if target is None:
             await self._navigator._navigate_to_page(profile_url)
             await self._session.check_rate_limit()
