@@ -24,6 +24,7 @@ import asyncio
 import logging
 import random
 import re
+import time
 from typing import Annotated, Any
 from urllib.parse import quote_plus
 
@@ -172,6 +173,12 @@ _INSTALL_COPY_HOOK_JS = r"""() => {
 }"""
 
 _TAKE_COPIED_JS = r"""() => { const v = window.__msgkitCopied || []; window.__msgkitCopied = []; return v; }"""
+
+# How long the "..." menu may take to load, how long the short link may take after the
+# click, and how long the whole card loop may run (the tool itself has 600 s).
+_MENU_ITEM_TIMEOUT_MS = 15000
+_COPY_WAIT_S = 20.0
+_COPY_BUDGET_S = 300.0
 
 _EXPERIENCE_JS = r"""() => {
   const main = document.querySelector('main');
@@ -727,6 +734,63 @@ async def _pause(lo: float, hi: float) -> None:
     await asyncio.sleep(random.uniform(lo, hi))
 
 
+async def _wait_copied(page: Any, seconds: float) -> list[str]:
+    """Wait until the page copies something; [] when nothing came in time."""
+    deadline = time.monotonic() + seconds
+    while True:
+        copied = await page.evaluate(_TAKE_COPIED_JS, isolated_context=False)
+        if copied or time.monotonic() >= deadline:
+            return copied or []
+        await asyncio.sleep(0.25)
+
+
+async def _copy_card_links(page: Any, posts: list[dict[str, Any]]) -> list[str]:
+    """Fill each card's share_url from its "Copy link to post" item; returns the errors.
+    A slow link must never land on the next card, so a card whose link never came stops the rest."""
+    errors: list[str] = []
+    await page.evaluate(_INSTALL_COPY_HOOK_JS, isolated_context=False)
+    cards = page.locator(_CARD)
+    started = time.monotonic()
+    stop: str | None = None
+    for post in posts:
+        i = post["index"]
+        post["share_url"] = None
+        if stop is None and time.monotonic() - started > _COPY_BUDGET_S:
+            stop = "out of time"
+        if stop is not None:
+            errors.append(f"card {i}: skipped, {stop}")
+            continue
+        clicked = False
+        try:
+            card = cards.nth(i)
+            await card.scroll_into_view_if_needed(timeout=5000)
+            await _pause(0.6, 1.4)
+            await card.locator('button[aria-label^="Open control menu"]').first.click(
+                timeout=5000
+            )
+            item = page.get_by_role("menuitem", name="Copy link to post").first
+            await item.wait_for(state="visible", timeout=_MENU_ITEM_TIMEOUT_MS)
+            clicked = True
+            await item.click(timeout=5000)
+            copied = await _wait_copied(page, _COPY_WAIT_S)
+            if copied:
+                post["share_url"] = copied[-1]
+            else:
+                errors.append(f"card {i}: nothing copied")
+                stop = f"card {i} never gave its link"
+        except Exception as e:  # one stubborn card must not lose the rest
+            errors.append(f"card {i}: {type(e).__name__}: {str(e)[:120]}")
+            if clicked:
+                # The click may have gone through: its link could still come.
+                stop = f"card {i} never gave its link"
+            try:
+                await page.keyboard.press("Escape")
+            except Exception:
+                pass
+        await _pause(0.8, 2.0)
+    return errors
+
+
 async def _scroll_round_trip(page: Any) -> None:
     """Scroll to the bottom of the page and back to the top (never fails the caller)."""
     try:
@@ -798,36 +862,8 @@ def register_msgkit_tools(
 
         posts: list[dict[str, Any]] = await page.evaluate(_CARDS_JS, limit)
         copy_errors: list[str] = []
-
         if copy_links and posts:
-            await page.evaluate(_INSTALL_COPY_HOOK_JS, isolated_context=False)
-            cards = page.locator(_CARD)
-            for post in posts:
-                i = post["index"]
-                try:
-                    card = cards.nth(i)
-                    await card.scroll_into_view_if_needed(timeout=5000)
-                    await _pause(0.6, 1.4)
-                    await card.locator(
-                        'button[aria-label^="Open control menu"]'
-                    ).first.click(timeout=5000)
-                    item = page.get_by_role("menuitem", name="Copy link to post")
-                    await item.first.click(timeout=5000)
-                    await _pause(0.5, 1.0)
-                    copied = await page.evaluate(
-                        _TAKE_COPIED_JS, isolated_context=False
-                    )
-                    post["share_url"] = copied[-1] if copied else None
-                    if not copied:
-                        copy_errors.append(f"card {i}: nothing copied")
-                except Exception as e:  # one stubborn card must not lose the rest
-                    copy_errors.append(f"card {i}: {type(e).__name__}: {str(e)[:120]}")
-                    post["share_url"] = None
-                    try:
-                        await page.keyboard.press("Escape")
-                    except Exception:
-                        pass
-                await _pause(0.8, 2.0)
+            copy_errors = await _copy_card_links(page, posts)
 
         return {
             "url": url,
